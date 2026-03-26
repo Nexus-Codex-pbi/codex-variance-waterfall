@@ -1,0 +1,129 @@
+{
+    "dataRoles": [
+        {
+            "displayName": "Category",
+            "name": "category",
+            "kind": "Grouping",
+            "description": "Breakdown dimension (e.g. BatteryCode or Beat)"
+        },
+        {
+            "displayName": "Start Value",
+            "name": "startValue",
+            "kind": "Measure",
+            "description": "Opening total (e.g. forecast qty)"
+        },
+        {
+            "displayName": "Variance",
+            "name": "variance",
+            "kind": "Measure",
+            "description": "Per-category variance amount"
+        }
+    ],
+    "objects": {
+        "waterfallSettings": {
+            "properties": {
+                "positiveColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "negativeColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "totalColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "connectorLine": {
+                    "type": { "bool": true }
+                },
+                "connectorColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "showEndTotal": {
+                    "type": { "bool": true }
+                },
+                "startLabel": {
+                    "type": { "text": true }
+                },
+                "endLabel": {
+                    "type": { "text": true }
+                },
+                "barWidth": {
+                    "type": { "numeric": true }
+                },
+                "orientation": {
+                    "type": {
+                        "enumeration": [
+                            { "displayName": "Vertical", "value": "vertical" },
+                            { "displayName": "Horizontal", "value": "horizontal" }
+                        ]
+                    }
+                }
+            }
+        },
+        "sortSettings": {
+            "properties": {
+                "sortBy": {
+                    "type": {
+                        "enumeration": [
+                            { "displayName": "Variance (High to Low)", "value": "variance_desc" },
+                            { "displayName": "Variance (Low to High)", "value": "variance_asc" },
+                            { "displayName": "Category (A-Z)", "value": "category" },
+                            { "displayName": "Absolute (High to Low)", "value": "absolute_desc" }
+                        ]
+                    }
+                },
+                "maxCategories": {
+                    "type": { "numeric": true }
+                }
+            }
+        },
+        "labelSettings": {
+            "properties": {
+                "showValues": {
+                    "type": { "bool": true }
+                },
+                "valuePosition": {
+                    "type": {
+                        "enumeration": [
+                            { "displayName": "Inside", "value": "inside" },
+                            { "displayName": "Outside", "value": "outside" },
+                            { "displayName": "Auto", "value": "auto" }
+                        ]
+                    }
+                },
+                "fontSize": {
+                    "type": { "formatting": { "fontSize": true } }
+                },
+                "displayUnits": {
+                    "type": {
+                        "enumeration": [
+                            { "displayName": "Auto", "value": "auto" },
+                            { "displayName": "None", "value": "none" },
+                            { "displayName": "Thousands", "value": "thousands" },
+                            { "displayName": "Millions", "value": "millions" }
+                        ]
+                    }
+                },
+                "decimalPlaces": {
+                    "type": { "numeric": true }
+                }
+            }
+        }
+    },
+    "dataViewMappings": [
+        {
+            "categorical": {
+                "categories": {
+                    "for": { "in": "category" },
+                    "dataReductionAlgorithm": { "top": { "count": 1000 } }
+                },
+                "values": {
+                    "select": [
+                        { "bind": { "to": "startValue" } },
+                        { "bind": { "to": "variance" } }
+                    ]
+                }
+            }
+        }
+    ],
+    "privileges": []
+}

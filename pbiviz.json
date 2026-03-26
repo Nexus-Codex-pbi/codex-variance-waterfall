@@ -1,0 +1,21 @@
+{
+  "visual": {
+    "name": "pbiVarianceWaterfall",
+    "displayName": "Variance Waterfall",
+    "guid": "pbiVarianceWaterfallC1D2E3F4A5B6C7D8E9F0A1B2C3D4E5F6",
+    "visualClassName": "Visual",
+    "version": "1.0.0.0",
+    "description": "Variance waterfall showing forecast-to-actual decomposition with cumulative running totals.",
+    "supportUrl": "https://nexusai.nexus",
+    "gitHubUrl": ""
+  },
+  "apiVersion": "5.9.1",
+  "author": { "name": "Neil Armstrong", "email": "harmsolo13@gmail.com" },
+  "assets": { "icon": "assets/icon.png" },
+  "externalJS": null,
+  "style": "style/visual.less",
+  "capabilities": "capabilities.json",
+  "dependencies": null,
+  "stringResources": [],
+  "version": "1.0.0.0"
+}
