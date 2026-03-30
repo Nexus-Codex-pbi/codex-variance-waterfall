@@ -181,14 +181,79 @@ class LabelSettingsCard extends FormattingSettingsCard {
         value: 0
     });
 
+    valueFontColor = new formattingSettings.ColorPicker({
+        name: "valueFontColor",
+        displayName: "Value Font Color",
+        description: "Color of value labels when positioned outside bars (leave default for auto)",
+        value: { value: "" }
+    });
+
     name: string = "labelSettings";
     displayName: string = "Data Labels";
     slices: Array<FormattingSettingsSlice> = [
         this.showValues,
         this.valuePosition,
         this.fontSize,
+        this.valueFontColor,
         this.displayUnits,
         this.decimalPlaces
+    ];
+}
+
+/**
+ * Axis & Gridlines Card
+ */
+class AxisSettingsCard extends FormattingSettingsCard {
+    axisLabelColor = new formattingSettings.ColorPicker({
+        name: "axisLabelColor",
+        displayName: "Axis Label Color",
+        description: "Color of axis tick labels (both X and Y)",
+        value: { value: "#5e5d5a" }
+    });
+
+    axisLabelFontSize = new formattingSettings.NumUpDown({
+        name: "axisLabelFontSize",
+        displayName: "Axis Label Font Size",
+        description: "Font size for axis labels in pixels",
+        value: 10
+    });
+
+    gridlineColor = new formattingSettings.ColorPicker({
+        name: "gridlineColor",
+        displayName: "Gridline Color",
+        description: "Color of the horizontal/vertical gridlines",
+        value: { value: "#e8e2d3" }
+    });
+
+    gridlineWidth = new formattingSettings.NumUpDown({
+        name: "gridlineWidth",
+        displayName: "Gridline Width",
+        description: "Width of gridlines in pixels",
+        value: 0.5
+    });
+
+    showGridlines = new formattingSettings.ToggleSwitch({
+        name: "showGridlines",
+        displayName: "Show Gridlines",
+        value: true
+    });
+
+    axisLineColor = new formattingSettings.ColorPicker({
+        name: "axisLineColor",
+        displayName: "Axis Line Color",
+        description: "Color of the axis lines",
+        value: { value: "#b4b2a9" }
+    });
+
+    name: string = "axisSettings";
+    displayName: string = "Axis & Gridlines";
+    slices: Array<FormattingSettingsSlice> = [
+        this.axisLabelColor,
+        this.axisLabelFontSize,
+        this.gridlineColor,
+        this.gridlineWidth,
+        this.showGridlines,
+        this.axisLineColor
     ];
 }
 
@@ -199,6 +264,7 @@ export class VisualFormattingSettingsModel extends FormattingSettingsModel {
     waterfallCard = new WaterfallSettingsCard();
     sortCard = new SortSettingsCard();
     labelCard = new LabelSettingsCard();
+    axisCard = new AxisSettingsCard();
 
-    cards = [this.waterfallCard, this.sortCard, this.labelCard];
+    cards = [this.waterfallCard, this.sortCard, this.labelCard, this.axisCard];
 }

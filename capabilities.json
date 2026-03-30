@@ -105,6 +105,31 @@
                 },
                 "decimalPlaces": {
                     "type": { "numeric": true }
+                },
+                "valueFontColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                }
+            }
+        },
+        "axisSettings": {
+            "properties": {
+                "axisLabelColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "axisLabelFontSize": {
+                    "type": { "numeric": true }
+                },
+                "gridlineColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
+                },
+                "gridlineWidth": {
+                    "type": { "numeric": true }
+                },
+                "showGridlines": {
+                    "type": { "bool": true }
+                },
+                "axisLineColor": {
+                    "type": { "fill": { "solid": { "color": true } } }
                 }
             }
         }
@@ -125,5 +150,17 @@
             }
         }
     ],
+    "supportsHighlight": true,
+    "supportsKeyboardFocus": true,
+    "supportsLandingPage": true,
+    "supportsEmptyDataView": true,
+    "supportsMultiVisualSelection": true,
+    "tooltips": {
+        "supportedTypes": {
+            "default": true,
+            "canvas": true
+        },
+        "roles": ["tooltips"]
+    },
     "privileges": []
 }

@@ -10,6 +10,12 @@ import "./../style/visual.less";
 import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructorOptions;
 import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
 import IVisual = powerbi.extensibility.visual.IVisual;
+import IVisualEventService = powerbi.extensibility.IVisualEventService;
+import IVisualHost = powerbi.extensibility.visual.IVisualHost;
+import ISelectionManager = powerbi.extensibility.ISelectionManager;
+import ITooltipService = powerbi.extensibility.ITooltipService;
+import ISandboxExtendedColorPalette = powerbi.extensibility.ISandboxExtendedColorPalette;
+import ILocalizationManager = powerbi.extensibility.ILocalizationManager;
 import DataView = powerbi.DataView;
 import DataViewCategorical = powerbi.DataViewCategorical;
 
@@ -29,6 +35,13 @@ interface WaterfallBar {
 
 export class Visual implements IVisual {
     private target: HTMLElement;
+    private host: IVisualHost;
+    private eventService: IVisualEventService;
+    private selectionManager: ISelectionManager;
+    private tooltipService: ITooltipService;
+    private colorPalette: ISandboxExtendedColorPalette;
+    private localizationManager: ILocalizationManager;
+    private isHighContrast: boolean;
     private svg: Selection<SVGSVGElement>;
     private chartGroup: Selection<SVGGElement>;
     private formattingSettings: VisualFormattingSettingsModel;
@@ -40,6 +53,22 @@ export class Visual implements IVisual {
     constructor(options: VisualConstructorOptions) {
         this.formattingSettingsService = new FormattingSettingsService();
         this.target = options.element;
+        this.host = options.host;
+        this.eventService = options.host.eventService;
+        this.selectionManager = options.host.createSelectionManager();
+        this.tooltipService = options.host.tooltipService;
+        this.colorPalette = options.host.colorPalette as ISandboxExtendedColorPalette;
+        this.localizationManager = options.host.createLocalizationManager();
+        this.isHighContrast = this.colorPalette.isHighContrast;
+
+        // Context menu on right-click
+        this.target.addEventListener("contextmenu", (e: MouseEvent) => {
+            this.selectionManager.showContextMenu(
+                {},
+                { x: e.clientX, y: e.clientY }
+            );
+            e.preventDefault();
+        });
 
         this.svg = d3Selection.select(this.target)
             .append("svg")
@@ -49,6 +78,12 @@ export class Visual implements IVisual {
     }
 
     public update(options: VisualUpdateOptions) {
+        this.eventService.renderingStarted(options);
+
+        try {
+        // High contrast mode detection
+        this.isHighContrast = this.colorPalette.isHighContrast;
+
         // Populate settings from dataView
         const dataView: DataView = options.dataViews && options.dataViews[0];
         this.formattingSettings = this.formattingSettingsService.populateFormattingSettingsModel(
@@ -68,6 +103,7 @@ export class Visual implements IVisual {
             || !dataView.categorical.categories.length
             || !dataView.categorical.values || !dataView.categorical.values.length) {
             this.renderEmpty(width, height);
+            this.eventService.renderingFinished(options);
             return;
         }
 
@@ -86,6 +122,7 @@ export class Visual implements IVisual {
 
         if (!varianceCol) {
             this.renderEmpty(width, height);
+            this.eventService.renderingFinished(options);
             return;
         }
 
@@ -112,6 +149,16 @@ export class Visual implements IVisual {
         const fontSize = clamp(lbl.fontSize.value || 11, 6, 30);
         const displayUnits = String(lbl.displayUnits.value?.value || "auto");
         const decimalPlaces = clamp(lbl.decimalPlaces.value ?? 0, 0, 6);
+        const customValueColor = lbl.valueFontColor.value.value;
+
+        // Axis & gridline settings
+        const ax = this.formattingSettings.axisCard;
+        const axisLabelColor = ax.axisLabelColor.value.value;
+        const axisLabelFontSize = clamp(ax.axisLabelFontSize.value || 10, 6, 30);
+        const gridlineColor = ax.gridlineColor.value.value;
+        const gridlineWidth = Math.max(0.1, ax.gridlineWidth.value);
+        const showGridlines = ax.showGridlines.value;
+        const axisLineColor = ax.axisLineColor.value.value;
 
         // Build category-variance pairs
         const startValue: number = startValueCol
@@ -195,12 +242,21 @@ export class Visual implements IVisual {
             this.renderHorizontal(bars, width, height, barWidthRatio,
                 positiveColor, negativeColor, totalColor,
                 showConnectors, connectorColor,
-                showValues, valuePosition, fontSize, displayUnits, decimalPlaces);
+                showValues, valuePosition, fontSize, displayUnits, decimalPlaces,
+                customValueColor, axisLabelColor, axisLabelFontSize,
+                gridlineColor, gridlineWidth, showGridlines, axisLineColor);
         } else {
             this.renderVertical(bars, width, height, barWidthRatio,
                 positiveColor, negativeColor, totalColor,
                 showConnectors, connectorColor,
-                showValues, valuePosition, fontSize, displayUnits, decimalPlaces);
+                showValues, valuePosition, fontSize, displayUnits, decimalPlaces,
+                customValueColor, axisLabelColor, axisLabelFontSize,
+                gridlineColor, gridlineWidth, showGridlines, axisLineColor);
+        }
+
+        this.eventService.renderingFinished(options);
+        } catch (e) {
+            this.eventService.renderingFailed(options, String(e));
         }
     }
 
@@ -209,7 +265,9 @@ export class Visual implements IVisual {
         positiveColor: string, negativeColor: string, totalColor: string,
         showConnectors: boolean, connectorColor: string,
         showValues: boolean, valuePosition: string, fontSize: number,
-        displayUnits: string, decimalPlaces: number
+        displayUnits: string, decimalPlaces: number,
+        customValueColor: string, axisLabelColor: string, axisLabelFontSize: number,
+        gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string
     ): void {
         const plotWidth = width - this.margin.left - this.margin.right;
         const plotHeight = height - this.margin.top - this.margin.bottom;
@@ -230,8 +288,8 @@ export class Visual implements IVisual {
 
         const yScale = d3Scale.scaleLinear().domain([yMin, yMax]).range([plotHeight, 0]).nice();
 
-        this.drawYAxis(yScale, plotHeight, plotWidth);
-        this.drawXAxis(xScale, plotHeight, bars.length);
+        this.drawYAxis(yScale, plotHeight, plotWidth, axisLabelColor, axisLabelFontSize, gridlineColor, gridlineWidth, showGridlines, axisLineColor);
+        this.drawXAxis(xScale, plotHeight, bars.length, axisLabelColor, axisLabelFontSize, axisLineColor);
 
         if (showConnectors) {
             for (let i = 0; i < bars.length - 1; i++) {
@@ -257,7 +315,7 @@ export class Visual implements IVisual {
         if (showValues) {
             this.drawVerticalLabels(barGroup, xScale, yScale,
                 positiveColor, negativeColor, totalColor,
-                valuePosition, fontSize, displayUnits, decimalPlaces);
+                valuePosition, fontSize, displayUnits, decimalPlaces, customValueColor);
         }
     }
 
@@ -266,7 +324,9 @@ export class Visual implements IVisual {
         positiveColor: string, negativeColor: string, totalColor: string,
         showConnectors: boolean, connectorColor: string,
         showValues: boolean, valuePosition: string, fontSize: number,
-        displayUnits: string, decimalPlaces: number
+        displayUnits: string, decimalPlaces: number,
+        customValueColor: string, axisLabelColor: string, axisLabelFontSize: number,
+        gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string
     ): void {
         // Horizontal: categories on Y, values on X
         const hMargin = { top: 20, right: 30, bottom: 30, left: 100 };
@@ -292,23 +352,25 @@ export class Visual implements IVisual {
 
         // Draw X axis (value axis, bottom)
         const xTicks = xScale.ticks(6);
-        this.chartGroup.selectAll(".grid-line").data(xTicks).enter()
-            .append("line").classed("grid-line", true)
-            .attr("x1", d => xScale(d)).attr("y1", 0)
-            .attr("x2", d => xScale(d)).attr("y2", plotHeight)
-            .attr("stroke", "#e8e2d3").attr("stroke-width", 0.5);
+        if (showGridlines) {
+            this.chartGroup.selectAll(".grid-line").data(xTicks).enter()
+                .append("line").classed("grid-line", true)
+                .attr("x1", d => xScale(d)).attr("y1", 0)
+                .attr("x2", d => xScale(d)).attr("y2", plotHeight)
+                .attr("stroke", gridlineColor).attr("stroke-width", gridlineWidth);
+        }
 
         this.chartGroup.selectAll(".x-tick").data(xTicks).enter()
             .append("text").classed("x-tick", true)
             .attr("x", d => xScale(d)).attr("y", plotHeight + 14)
-            .attr("text-anchor", "middle").attr("font-size", "10px")
-            .attr("fill", "#5e5d5a").attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+            .attr("text-anchor", "middle").attr("font-size", `${axisLabelFontSize}px`)
+            .attr("fill", axisLabelColor).attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
             .text(d => formatValue(d, "auto", 0));
 
         // X axis line
         this.chartGroup.append("line")
             .attr("x1", 0).attr("y1", plotHeight).attr("x2", plotWidth).attr("y2", plotHeight)
-            .attr("stroke", "#b4b2a9").attr("stroke-width", 1);
+            .attr("stroke", axisLineColor).attr("stroke-width", 1);
 
         // Y axis category labels
         const labels = yScale.domain();
@@ -316,14 +378,14 @@ export class Visual implements IVisual {
             .append("text").classed("y-label", true)
             .attr("x", -8).attr("y", d => (yScale(d) ?? 0) + yScale.bandwidth() / 2)
             .attr("text-anchor", "end").attr("dominant-baseline", "central")
-            .attr("font-size", "10px").attr("fill", "#5e5d5a")
+            .attr("font-size", `${axisLabelFontSize}px`).attr("fill", axisLabelColor)
             .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
             .text(d => d.length > 14 ? d.substring(0, 12) + "..." : d);
 
         // Y axis line
         this.chartGroup.append("line")
             .attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", plotHeight)
-            .attr("stroke", "#b4b2a9").attr("stroke-width", 1);
+            .attr("stroke", axisLineColor).attr("stroke-width", 1);
 
         // Connector lines (horizontal: vertical connectors between bars)
         if (showConnectors) {
@@ -382,7 +444,7 @@ export class Visual implements IVisual {
                         const c = d.type === "total" ? totalColor : d.type === "positive" ? positiveColor : negativeColor;
                         return contrastText(c);
                     }
-                    return "#333";
+                    return customValueColor && customValueColor.length > 0 ? customValueColor : "#333";
                 })
                 .text(d => {
                     const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
@@ -396,7 +458,8 @@ export class Visual implements IVisual {
         xScale: d3Scale.ScaleBand<string>,
         yScale: d3Scale.ScaleLinear<number, number>,
         positiveColor: string, negativeColor: string, totalColor: string,
-        valuePosition: string, fontSize: number, displayUnits: string, decimalPlaces: number
+        valuePosition: string, fontSize: number, displayUnits: string, decimalPlaces: number,
+        customValueColor: string
     ): void {
         barGroup.append("text")
             .classed("bar-label", true)
@@ -426,7 +489,7 @@ export class Visual implements IVisual {
                     const c = d.type === "total" ? totalColor : d.type === "positive" ? positiveColor : negativeColor;
                     return contrastText(c);
                 }
-                return "#333";
+                return customValueColor && customValueColor.length > 0 ? customValueColor : "#333";
             })
             .attr("font-weight", "600")
             .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
@@ -445,21 +508,27 @@ export class Visual implements IVisual {
     }
 
     /** Draw Y axis with gridlines */
-    private drawYAxis(yScale: d3Scale.ScaleLinear<number, number>, plotHeight: number, plotWidth: number): void {
+    private drawYAxis(
+        yScale: d3Scale.ScaleLinear<number, number>, plotHeight: number, plotWidth: number,
+        axisLabelColor: string, axisLabelFontSize: number,
+        gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string
+    ): void {
         const ticks = yScale.ticks(6);
 
         // Gridlines
-        this.chartGroup.selectAll(".grid-line")
-            .data(ticks)
-            .enter()
-            .append("line")
-            .classed("grid-line", true)
-            .attr("x1", 0)
-            .attr("y1", d => yScale(d))
-            .attr("x2", plotWidth)
-            .attr("y2", d => yScale(d))
-            .attr("stroke", "#e8e2d3")
-            .attr("stroke-width", 0.5);
+        if (showGridlines) {
+            this.chartGroup.selectAll(".grid-line")
+                .data(ticks)
+                .enter()
+                .append("line")
+                .classed("grid-line", true)
+                .attr("x1", 0)
+                .attr("y1", d => yScale(d))
+                .attr("x2", plotWidth)
+                .attr("y2", d => yScale(d))
+                .attr("stroke", gridlineColor)
+                .attr("stroke-width", gridlineWidth);
+        }
 
         // Tick labels
         this.chartGroup.selectAll(".y-tick")
@@ -471,8 +540,8 @@ export class Visual implements IVisual {
             .attr("y", d => yScale(d))
             .attr("text-anchor", "end")
             .attr("dominant-baseline", "central")
-            .attr("font-size", "10px")
-            .attr("fill", "#5e5d5a")
+            .attr("font-size", `${axisLabelFontSize}px`)
+            .attr("fill", axisLabelColor)
             .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
             .text(d => formatValue(d, "auto", 0));
 
@@ -480,12 +549,15 @@ export class Visual implements IVisual {
         this.chartGroup.append("line")
             .attr("x1", 0).attr("y1", 0)
             .attr("x2", 0).attr("y2", plotHeight)
-            .attr("stroke", "#b4b2a9")
+            .attr("stroke", axisLineColor)
             .attr("stroke-width", 1);
     }
 
     /** Draw X axis with category labels */
-    private drawXAxis(xScale: d3Scale.ScaleBand<string>, plotHeight: number, barCount: number): void {
+    private drawXAxis(
+        xScale: d3Scale.ScaleBand<string>, plotHeight: number, barCount: number,
+        axisLabelColor: string, axisLabelFontSize: number, axisLineColor: string
+    ): void {
         const labels = xScale.domain();
         const rotate = barCount > 6;
 
@@ -493,7 +565,7 @@ export class Visual implements IVisual {
         this.chartGroup.append("line")
             .attr("x1", 0).attr("y1", plotHeight)
             .attr("x2", xScale.range()[1]).attr("y2", plotHeight)
-            .attr("stroke", "#b4b2a9")
+            .attr("stroke", axisLineColor)
             .attr("stroke-width", 1);
 
         // Labels
@@ -506,8 +578,8 @@ export class Visual implements IVisual {
             .attr("y", plotHeight + 12)
             .attr("text-anchor", rotate ? "end" : "middle")
             .attr("dominant-baseline", "hanging")
-            .attr("font-size", "10px")
-            .attr("fill", "#5e5d5a")
+            .attr("font-size", `${axisLabelFontSize}px`)
+            .attr("fill", axisLabelColor)
             .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
             .attr("transform", d => {
                 if (!rotate) return "";
@@ -529,6 +601,10 @@ export class Visual implements IVisual {
             .attr("fill", "#5e5d5a")
             .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
             .text("Add Category, Start Value, and Variance fields to build the waterfall.");
+    }
+
+    public destroy(): void {
+        this.chartGroup.selectAll("*").remove();
     }
 
     /**

@@ -1,0 +1,7 @@
+{
+    "Visual_Short_Description": "Variance waterfall showing forecast-to-actual decomposition with cumulative running totals.",
+    "Visual_Long_Description": "Vertical and horizontal waterfall charts with start value, per-category variance bars, connector lines, and end totals. Sort by variance, category, or absolute value.",
+    "Role_Category": "Category",
+    "Role_StartValue": "Start Value",
+    "Role_Variance": "Variance"
+}
