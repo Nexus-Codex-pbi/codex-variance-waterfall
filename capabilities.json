@@ -113,6 +113,9 @@
         },
         "axisSettings": {
             "properties": {
+                "showAxisLabels": {
+                    "type": { "bool": true }
+                },
                 "axisLabelColor": {
                     "type": { "fill": { "solid": { "color": true } } }
                 },
@@ -130,6 +133,15 @@
                 },
                 "axisLineColor": {
                     "type": { "fill": { "solid": { "color": true } } }
+                },
+                "showAxisTitles": {
+                    "type": { "bool": true }
+                },
+                "xAxisTitle": {
+                    "type": { "text": true }
+                },
+                "yAxisTitle": {
+                    "type": { "text": true }
                 }
             }
         }
@@ -159,8 +171,7 @@
         "supportedTypes": {
             "default": true,
             "canvas": true
-        },
-        "roles": ["tooltips"]
+        }
     },
     "privileges": []
 }

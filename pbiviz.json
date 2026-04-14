@@ -1,16 +1,16 @@
 {
   "visual": {
-    "name": "pbiVarianceWaterfall",
-    "displayName": "Variance Waterfall",
-    "guid": "pbiVarianceWaterfallC1D2E3F4A5B6C7D8E9F0A1B2C3D4E5F6",
+    "name": "codexVarianceWaterfall",
+    "displayName": "Codex Variance Waterfall",
+    "guid": "codexVarianceWaterfallC1D2E3F4A5B6C7D8E9F0A1B2C3D4E5F6",
     "visualClassName": "Visual",
     "version": "1.0.0.0",
     "description": "Variance waterfall showing forecast-to-actual decomposition with cumulative running totals.",
-    "supportUrl": "https://nexusai.nexus",
+    "supportUrl": "https://nexuscodex.nexus/support",
     "gitHubUrl": ""
   },
-  "apiVersion": "5.9.1",
-  "author": { "name": "Neil Armstrong", "email": "harmsolo13@gmail.com" },
+  "apiVersion": "5.10.0",
+  "author": { "name": "Nexus Codex", "email": "support@nexuscodex.nexus" },
   "assets": { "icon": "assets/icon.png" },
   "externalJS": null,
   "style": "style/visual.less",

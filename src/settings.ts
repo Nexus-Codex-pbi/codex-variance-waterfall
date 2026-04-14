@@ -1,10 +1,14 @@
 "use strict";
 
+import powerbi from "powerbi-visuals-api";
+
 import { formattingSettings } from "powerbi-visuals-utils-formattingmodel";
 
 import FormattingSettingsCard = formattingSettings.SimpleCard;
 import FormattingSettingsSlice = formattingSettings.Slice;
 import FormattingSettingsModel = formattingSettings.Model;
+
+const ConstantOrRule = powerbi.VisualEnumerationInstanceKinds.ConstantOrRule;
 
 /**
  * Waterfall Appearance Card
@@ -14,21 +18,24 @@ class WaterfallSettingsCard extends FormattingSettingsCard {
         name: "positiveColor",
         displayName: "Positive Color",
         description: "Color for positive variance bars",
-        value: { value: "#007064" }
+        value: { value: "#007064" },
+        instanceKind: ConstantOrRule
     });
 
     negativeColor = new formattingSettings.ColorPicker({
         name: "negativeColor",
         displayName: "Negative Color",
         description: "Color for negative variance bars",
-        value: { value: "#e60e22" }
+        value: { value: "#e60e22" },
+        instanceKind: ConstantOrRule
     });
 
     totalColor = new formattingSettings.ColorPicker({
         name: "totalColor",
         displayName: "Total Color",
         description: "Color for start and end total bars",
-        value: { value: "#130064" }
+        value: { value: "#130064" },
+        instanceKind: ConstantOrRule
     });
 
     connectorLine = new formattingSettings.ToggleSwitch({
@@ -42,7 +49,8 @@ class WaterfallSettingsCard extends FormattingSettingsCard {
         name: "connectorColor",
         displayName: "Connector Color",
         description: "Color of connector lines",
-        value: { value: "#b4b2a9" }
+        value: { value: "#b4b2a9" },
+        instanceKind: ConstantOrRule
     });
 
     showEndTotal = new formattingSettings.ToggleSwitch({
@@ -185,7 +193,8 @@ class LabelSettingsCard extends FormattingSettingsCard {
         name: "valueFontColor",
         displayName: "Value Font Color",
         description: "Color of value labels when positioned outside bars (leave default for auto)",
-        value: { value: "" }
+        value: { value: "" },
+        instanceKind: ConstantOrRule
     });
 
     name: string = "labelSettings";
@@ -204,11 +213,19 @@ class LabelSettingsCard extends FormattingSettingsCard {
  * Axis & Gridlines Card
  */
 class AxisSettingsCard extends FormattingSettingsCard {
+    showAxisLabels = new formattingSettings.ToggleSwitch({
+        name: "showAxisLabels",
+        displayName: "Show Axis Labels",
+        description: "Show or hide category and value axis labels",
+        value: true
+    });
+
     axisLabelColor = new formattingSettings.ColorPicker({
         name: "axisLabelColor",
         displayName: "Axis Label Color",
         description: "Color of axis tick labels (both X and Y)",
-        value: { value: "#5e5d5a" }
+        value: { value: "#5e5d5a" },
+        instanceKind: ConstantOrRule
     });
 
     axisLabelFontSize = new formattingSettings.NumUpDown({
@@ -222,7 +239,8 @@ class AxisSettingsCard extends FormattingSettingsCard {
         name: "gridlineColor",
         displayName: "Gridline Color",
         description: "Color of the horizontal/vertical gridlines",
-        value: { value: "#e8e2d3" }
+        value: { value: "#e8e2d3" },
+        instanceKind: ConstantOrRule
     });
 
     gridlineWidth = new formattingSettings.NumUpDown({
@@ -242,18 +260,44 @@ class AxisSettingsCard extends FormattingSettingsCard {
         name: "axisLineColor",
         displayName: "Axis Line Color",
         description: "Color of the axis lines",
-        value: { value: "#b4b2a9" }
+        value: { value: "#b4b2a9" },
+        instanceKind: ConstantOrRule
+    });
+
+    showAxisTitles = new formattingSettings.ToggleSwitch({
+        name: "showAxisTitles",
+        displayName: "Show Axis Titles",
+        description: "Display titles below X axis and beside Y axis",
+        value: false
+    });
+
+    xAxisTitle = new formattingSettings.TextInput({
+        name: "xAxisTitle",
+        displayName: "X Axis Title",
+        placeholder: "X axis title",
+        value: ""
+    });
+
+    yAxisTitle = new formattingSettings.TextInput({
+        name: "yAxisTitle",
+        displayName: "Y Axis Title",
+        placeholder: "Y axis title",
+        value: ""
     });
 
     name: string = "axisSettings";
     displayName: string = "Axis & Gridlines";
     slices: Array<FormattingSettingsSlice> = [
+        this.showAxisLabels,
         this.axisLabelColor,
         this.axisLabelFontSize,
         this.gridlineColor,
         this.gridlineWidth,
         this.showGridlines,
-        this.axisLineColor
+        this.axisLineColor,
+        this.showAxisTitles,
+        this.xAxisTitle,
+        this.yAxisTitle
     ];
 }
 

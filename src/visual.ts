@@ -16,6 +16,8 @@ import ISelectionManager = powerbi.extensibility.ISelectionManager;
 import ITooltipService = powerbi.extensibility.ITooltipService;
 import ISandboxExtendedColorPalette = powerbi.extensibility.ISandboxExtendedColorPalette;
 import ILocalizationManager = powerbi.extensibility.ILocalizationManager;
+import ISelectionId = powerbi.visuals.ISelectionId;
+import VisualTooltipDataItem = powerbi.extensibility.VisualTooltipDataItem;
 import DataView = powerbi.DataView;
 import DataViewCategorical = powerbi.DataViewCategorical;
 
@@ -31,6 +33,8 @@ interface WaterfallBar {
     cumStart: number;    // y-position bottom of bar
     cumEnd: number;      // y-position top of bar
     type: "total" | "positive" | "negative";
+    selectionId: ISelectionId | null;
+    categoryIndex: number;   // index in source categories, -1 for totals
 }
 
 export class Visual implements IVisual {
@@ -46,6 +50,11 @@ export class Visual implements IVisual {
     private chartGroup: Selection<SVGGElement>;
     private formattingSettings: VisualFormattingSettingsModel;
     private formattingSettingsService: FormattingSettingsService;
+
+    // Current data for tooltip/selection lookups
+    private currentBars: WaterfallBar[] = [];
+    private currentDisplayUnits: string = "auto";
+    private currentDecimalPlaces: number = 0;
 
     // Margins
     private readonly margin = { top: 24, right: 20, bottom: 60, left: 64 };
@@ -75,6 +84,54 @@ export class Visual implements IVisual {
             .classed("variance-waterfall", true);
 
         this.chartGroup = this.svg.append("g").classed("chart-area", true);
+
+        // Tooltip on bar hover
+        this.target.addEventListener("mousemove", (e: MouseEvent) => {
+            const bar = this.findBarFromEvent(e);
+            if (bar) {
+                const items: VisualTooltipDataItem[] = [
+                    { displayName: bar.label, value: formatValue(bar.value, this.currentDisplayUnits, this.currentDecimalPlaces) }
+                ];
+                if (bar.type !== "total") {
+                    items.push({ displayName: "Running Total", value: formatValue(bar.cumEnd, this.currentDisplayUnits, this.currentDecimalPlaces) });
+                }
+                this.tooltipService.show({
+                    coordinates: [e.clientX, e.clientY],
+                    isTouchEvent: false,
+                    dataItems: items,
+                    identities: bar.selectionId ? [bar.selectionId] : []
+                });
+            } else {
+                this.tooltipService.hide({ isTouchEvent: false, immediately: false });
+            }
+        });
+        this.target.addEventListener("mouseleave", () => {
+            this.tooltipService.hide({ isTouchEvent: false, immediately: false });
+        });
+
+        // Cross-filtering on bar click
+        this.target.addEventListener("click", (e: MouseEvent) => {
+            const bar = this.findBarFromEvent(e);
+            if (bar && bar.selectionId) {
+                this.selectionManager.select(bar.selectionId, e.ctrlKey || e.metaKey);
+                e.stopPropagation();
+            }
+        });
+    }
+
+    /** Find which WaterfallBar the mouse is over by checking SVG rect elements */
+    private findBarFromEvent(e: MouseEvent): WaterfallBar | null {
+        const target = e.target as SVGElement;
+        if (!target || target.tagName !== "rect") return null;
+        const parentG = target.parentElement;
+        if (!parentG || !parentG.classList.contains("wf-bar")) return null;
+        // Find index among wf-bar groups
+        const allBars = this.chartGroup.selectAll<SVGGElement, WaterfallBar>(".wf-bar").nodes();
+        const idx = allBars.indexOf(parentG as unknown as SVGGElement);
+        if (idx >= 0 && idx < this.currentBars.length) {
+            return this.currentBars[idx];
+        }
+        return null;
     }
 
     public update(options: VisualUpdateOptions) {
@@ -97,6 +154,13 @@ export class Visual implements IVisual {
         const width = options.viewport.width;
         const height = options.viewport.height;
         this.svg.attr("width", width).attr("height", height);
+
+        // High contrast background
+        if (this.isHighContrast) {
+            this.svg.style("background-color", this.colorPalette.background.value);
+        } else {
+            this.svg.style("background-color", null);
+        }
 
         // Validate data
         if (!dataView || !dataView.categorical || !dataView.categorical.categories
@@ -153,24 +217,28 @@ export class Visual implements IVisual {
 
         // Axis & gridline settings
         const ax = this.formattingSettings.axisCard;
+        const showAxisLabels = ax.showAxisLabels.value;
         const axisLabelColor = ax.axisLabelColor.value.value;
         const axisLabelFontSize = clamp(ax.axisLabelFontSize.value || 10, 6, 30);
         const gridlineColor = ax.gridlineColor.value.value;
         const gridlineWidth = Math.max(0.1, ax.gridlineWidth.value);
         const showGridlines = ax.showGridlines.value;
         const axisLineColor = ax.axisLineColor.value.value;
+        const showAxisTitles = ax.showAxisTitles.value;
+        const xAxisTitle = ax.xAxisTitle.value || "";
+        const yAxisTitle = ax.yAxisTitle.value || "";
 
         // Build category-variance pairs
         const startValue: number = startValueCol
             ? (Number(startValueCol.values[0]) || 0)
             : 0;
 
-        interface CatVar { cat: string; variance: number; }
+        interface CatVar { cat: string; variance: number; catIndex: number; }
         let items: CatVar[] = [];
         for (let i = 0; i < categories.length; i++) {
             const v = Number(varianceCol.values[i]) || 0;
             if (v !== 0) {
-                items.push({ cat: String(categories[i]), variance: v });
+                items.push({ cat: String(categories[i]), variance: v, catIndex: i });
             }
         }
 
@@ -195,7 +263,7 @@ export class Visual implements IVisual {
             const visible = items.slice(0, maxCategories);
             const remainder = items.slice(maxCategories);
             const otherSum = remainder.reduce((s, r) => s + r.variance, 0);
-            visible.push({ cat: "Other", variance: otherSum });
+            visible.push({ cat: this.localizationManager.getDisplayName("Overflow_Other") || "Other", variance: otherSum, catIndex: -1 });
             items = visible;
         }
 
@@ -208,7 +276,9 @@ export class Visual implements IVisual {
             value: startValue,
             cumStart: 0,
             cumEnd: startValue,
-            type: "total"
+            type: "total",
+            selectionId: null,
+            categoryIndex: -1
         });
 
         // Variance bars
@@ -216,12 +286,19 @@ export class Visual implements IVisual {
         for (const item of items) {
             const prev = running;
             running += item.variance;
+            const selId = item.catIndex >= 0
+                ? this.host.createSelectionIdBuilder()
+                    .withCategory(categorical.categories[0], item.catIndex)
+                    .createSelectionId()
+                : null;
             bars.push({
                 label: item.cat,
                 value: item.variance,
                 cumStart: prev,
                 cumEnd: running,
-                type: item.variance >= 0 ? "positive" : "negative"
+                type: item.variance >= 0 ? "positive" : "negative",
+                selectionId: selId,
+                categoryIndex: item.catIndex
             });
         }
 
@@ -232,9 +309,16 @@ export class Visual implements IVisual {
                 value: running,
                 cumStart: 0,
                 cumEnd: running,
-                type: "total"
+                type: "total",
+                selectionId: null,
+                categoryIndex: -1
             });
         }
+
+        // Store for tooltip/selection event handlers
+        this.currentBars = bars;
+        this.currentDisplayUnits = displayUnits;
+        this.currentDecimalPlaces = decimalPlaces;
 
         const orientation = String(wf.orientation.value?.value || "vertical");
 
@@ -243,15 +327,17 @@ export class Visual implements IVisual {
                 positiveColor, negativeColor, totalColor,
                 showConnectors, connectorColor,
                 showValues, valuePosition, fontSize, displayUnits, decimalPlaces,
-                customValueColor, axisLabelColor, axisLabelFontSize,
-                gridlineColor, gridlineWidth, showGridlines, axisLineColor);
+                customValueColor, showAxisLabels, axisLabelColor, axisLabelFontSize,
+                gridlineColor, gridlineWidth, showGridlines, axisLineColor,
+                showAxisTitles, xAxisTitle, yAxisTitle);
         } else {
             this.renderVertical(bars, width, height, barWidthRatio,
                 positiveColor, negativeColor, totalColor,
                 showConnectors, connectorColor,
                 showValues, valuePosition, fontSize, displayUnits, decimalPlaces,
-                customValueColor, axisLabelColor, axisLabelFontSize,
-                gridlineColor, gridlineWidth, showGridlines, axisLineColor);
+                customValueColor, showAxisLabels, axisLabelColor, axisLabelFontSize,
+                gridlineColor, gridlineWidth, showGridlines, axisLineColor,
+                showAxisTitles, xAxisTitle, yAxisTitle);
         }
 
         this.eventService.renderingFinished(options);
@@ -266,14 +352,26 @@ export class Visual implements IVisual {
         showConnectors: boolean, connectorColor: string,
         showValues: boolean, valuePosition: string, fontSize: number,
         displayUnits: string, decimalPlaces: number,
-        customValueColor: string, axisLabelColor: string, axisLabelFontSize: number,
-        gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string
+        customValueColor: string, showAxisLabels: boolean, axisLabelColor: string, axisLabelFontSize: number,
+        gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string,
+        showAxisTitles: boolean, xAxisTitle: string, yAxisTitle: string
     ): void {
-        const plotWidth = width - this.margin.left - this.margin.right;
-        const plotHeight = height - this.margin.top - this.margin.bottom;
+        // In vertical mode: X = categories, Y = values
+        const axisTitleFontSize = axisLabelFontSize + 2;
+        const extraBottom = (showAxisTitles && xAxisTitle) ? axisTitleFontSize + 8 : 0;
+        const extraLeft = (showAxisTitles && yAxisTitle) ? axisTitleFontSize + 8 : 0;
+        const effectiveMargin = {
+            top: this.margin.top,
+            right: this.margin.right,
+            bottom: this.margin.bottom + extraBottom,
+            left: this.margin.left + extraLeft
+        };
+
+        const plotWidth = width - effectiveMargin.left - effectiveMargin.right;
+        const plotHeight = height - effectiveMargin.top - effectiveMargin.bottom;
         if (plotWidth <= 0 || plotHeight <= 0) return;
 
-        this.chartGroup.attr("transform", `translate(${this.margin.left},${this.margin.top})`);
+        this.chartGroup.attr("transform", `translate(${effectiveMargin.left},${effectiveMargin.top})`);
 
         const xScale = d3Scale.scaleBand<string>()
             .domain(bars.map(b => b.label))
@@ -288,8 +386,10 @@ export class Visual implements IVisual {
 
         const yScale = d3Scale.scaleLinear().domain([yMin, yMax]).range([plotHeight, 0]).nice();
 
-        this.drawYAxis(yScale, plotHeight, plotWidth, axisLabelColor, axisLabelFontSize, gridlineColor, gridlineWidth, showGridlines, axisLineColor);
-        this.drawXAxis(xScale, plotHeight, bars.length, axisLabelColor, axisLabelFontSize, axisLineColor);
+        if (showAxisLabels) {
+            this.drawYAxis(yScale, plotHeight, plotWidth, axisLabelColor, axisLabelFontSize, gridlineColor, gridlineWidth, showGridlines, axisLineColor);
+            this.drawXAxis(xScale, plotHeight, bars.length, axisLabelColor, axisLabelFontSize, axisLineColor);
+        }
 
         if (showConnectors) {
             for (let i = 0; i < bars.length - 1; i++) {
@@ -312,10 +412,59 @@ export class Visual implements IVisual {
             .attr("fill", d => d.type === "total" ? totalColor : d.type === "positive" ? positiveColor : negativeColor)
             .attr("rx", 2).attr("ry", 2);
 
+        // High contrast overrides for vertical bars and connectors
+        if (this.isHighContrast) {
+            const hcFg = this.colorPalette.foreground.value;
+            barGroup.select("rect").attr("fill", hcFg);
+            this.chartGroup.selectAll(".connector").attr("stroke", hcFg);
+        }
+
         if (showValues) {
             this.drawVerticalLabels(barGroup, xScale, yScale,
                 positiveColor, negativeColor, totalColor,
                 valuePosition, fontSize, displayUnits, decimalPlaces, customValueColor);
+
+            // High contrast overrides for value labels
+            if (this.isHighContrast) {
+                const hcFg = this.colorPalette.foreground.value;
+                const hcBg = this.colorPalette.background.value;
+                barGroup.select(".bar-label").attr("fill", (d: WaterfallBar) => {
+                    const barTop = yScale(Math.max(d.cumStart, d.cumEnd));
+                    const barBottom = yScale(Math.min(d.cumStart, d.cumEnd));
+                    const pos = this.resolvePosition(valuePosition, barBottom - barTop, fontSize);
+                    return pos === "inside" ? hcBg : hcFg;
+                });
+            }
+        }
+
+        // Axis titles (vertical mode: X = categories, Y = values)
+        if (showAxisTitles) {
+            const titleColor = this.isHighContrast ? this.colorPalette.foreground.value : axisLabelColor;
+            if (xAxisTitle) {
+                this.chartGroup.append("text")
+                    .classed("axis-title x-axis-title", true)
+                    .attr("x", plotWidth / 2)
+                    .attr("y", plotHeight + effectiveMargin.bottom - this.margin.bottom + axisTitleFontSize + 4)
+                    .attr("text-anchor", "middle")
+                    .attr("font-size", `${axisTitleFontSize}px`)
+                    .attr("font-weight", "600")
+                    .attr("fill", titleColor)
+                    .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+                    .text(xAxisTitle);
+            }
+            if (yAxisTitle) {
+                this.chartGroup.append("text")
+                    .classed("axis-title y-axis-title", true)
+                    .attr("x", -(plotHeight / 2))
+                    .attr("y", -(effectiveMargin.left - this.margin.left + axisTitleFontSize / 2))
+                    .attr("text-anchor", "middle")
+                    .attr("transform", "rotate(-90)")
+                    .attr("font-size", `${axisTitleFontSize}px`)
+                    .attr("font-weight", "600")
+                    .attr("fill", titleColor)
+                    .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+                    .text(yAxisTitle);
+            }
         }
     }
 
@@ -325,11 +474,15 @@ export class Visual implements IVisual {
         showConnectors: boolean, connectorColor: string,
         showValues: boolean, valuePosition: string, fontSize: number,
         displayUnits: string, decimalPlaces: number,
-        customValueColor: string, axisLabelColor: string, axisLabelFontSize: number,
-        gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string
+        customValueColor: string, showAxisLabels: boolean, axisLabelColor: string, axisLabelFontSize: number,
+        gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string,
+        showAxisTitles: boolean, xAxisTitle: string, yAxisTitle: string
     ): void {
         // Horizontal: categories on Y, values on X
-        const hMargin = { top: 20, right: 30, bottom: 30, left: 100 };
+        const axisTitleFontSize = axisLabelFontSize + 2;
+        const extraBottom = (showAxisTitles && xAxisTitle) ? axisTitleFontSize + 8 : 0;
+        const extraLeft = (showAxisTitles && yAxisTitle) ? axisTitleFontSize + 8 : 0;
+        const hMargin = { top: 20, right: 30, bottom: 30 + extraBottom, left: 100 + extraLeft };
         const plotWidth = width - hMargin.left - hMargin.right;
         const plotHeight = height - hMargin.top - hMargin.bottom;
         if (plotWidth <= 0 || plotHeight <= 0) return;
@@ -360,30 +513,34 @@ export class Visual implements IVisual {
                 .attr("stroke", gridlineColor).attr("stroke-width", gridlineWidth);
         }
 
-        this.chartGroup.selectAll(".x-tick").data(xTicks).enter()
-            .append("text").classed("x-tick", true)
-            .attr("x", d => xScale(d)).attr("y", plotHeight + 14)
-            .attr("text-anchor", "middle").attr("font-size", `${axisLabelFontSize}px`)
-            .attr("fill", axisLabelColor).attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
-            .text(d => formatValue(d, "auto", 0));
+        if (showAxisLabels) {
+            this.chartGroup.selectAll(".x-tick").data(xTicks).enter()
+                .append("text").classed("x-tick", true)
+                .attr("x", d => xScale(d)).attr("y", plotHeight + 14)
+                .attr("text-anchor", "middle").attr("font-size", `${axisLabelFontSize}px`)
+                .attr("fill", axisLabelColor).attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+                .text(d => formatValue(d, "auto", 0));
+        }
 
         // X axis line
-        this.chartGroup.append("line")
+        this.chartGroup.append("line").classed("axis-line", true)
             .attr("x1", 0).attr("y1", plotHeight).attr("x2", plotWidth).attr("y2", plotHeight)
             .attr("stroke", axisLineColor).attr("stroke-width", 1);
 
         // Y axis category labels
-        const labels = yScale.domain();
-        this.chartGroup.selectAll(".y-label").data(labels).enter()
-            .append("text").classed("y-label", true)
-            .attr("x", -8).attr("y", d => (yScale(d) ?? 0) + yScale.bandwidth() / 2)
-            .attr("text-anchor", "end").attr("dominant-baseline", "central")
-            .attr("font-size", `${axisLabelFontSize}px`).attr("fill", axisLabelColor)
-            .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
-            .text(d => d.length > 14 ? d.substring(0, 12) + "..." : d);
+        if (showAxisLabels) {
+            const labels = yScale.domain();
+            this.chartGroup.selectAll(".y-label").data(labels).enter()
+                .append("text").classed("y-label", true)
+                .attr("x", -8).attr("y", d => (yScale(d) ?? 0) + yScale.bandwidth() / 2)
+                .attr("text-anchor", "end").attr("dominant-baseline", "central")
+                .attr("font-size", `${axisLabelFontSize}px`).attr("fill", axisLabelColor)
+                .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+                .text(d => d.length > 14 ? d.substring(0, 12) + "..." : d);
+        }
 
         // Y axis line
-        this.chartGroup.append("line")
+        this.chartGroup.append("line").classed("axis-line", true)
             .attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", plotHeight)
             .attr("stroke", axisLineColor).attr("stroke-width", 1);
 
@@ -409,6 +566,17 @@ export class Visual implements IVisual {
             .attr("height", yScale.bandwidth())
             .attr("fill", d => d.type === "total" ? totalColor : d.type === "positive" ? positiveColor : negativeColor)
             .attr("rx", 2).attr("ry", 2);
+
+        // High contrast overrides for horizontal bars, connectors, axes, gridlines, and labels
+        if (this.isHighContrast) {
+            const hcFg = this.colorPalette.foreground.value;
+            barGroup.select("rect").attr("fill", hcFg);
+            this.chartGroup.selectAll(".connector").attr("stroke", hcFg);
+            this.chartGroup.selectAll(".grid-line").attr("stroke", hcFg).attr("opacity", 0.3);
+            this.chartGroup.selectAll(".axis-line").attr("stroke", hcFg);
+            this.chartGroup.selectAll(".x-tick").attr("fill", hcFg);
+            this.chartGroup.selectAll(".y-label").attr("fill", hcFg);
+        }
 
         // Value labels
         if (showValues) {
@@ -450,6 +618,49 @@ export class Visual implements IVisual {
                     const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
                     return prefix + formatValue(d.value, displayUnits, decimalPlaces);
                 });
+
+            // High contrast overrides for horizontal value labels
+            if (this.isHighContrast) {
+                const hcFg = this.colorPalette.foreground.value;
+                const hcBg = this.colorPalette.background.value;
+                barGroup.select(".bar-label").attr("fill", (d: WaterfallBar) => {
+                    const barLeft = xScale(Math.min(d.cumStart, d.cumEnd));
+                    const barRight = xScale(Math.max(d.cumStart, d.cumEnd));
+                    const barW = barRight - barLeft;
+                    const pos = this.resolvePosition(valuePosition, barW, fontSize * 3);
+                    return pos === "inside" ? hcBg : hcFg;
+                });
+            }
+        }
+
+        // Axis titles (horizontal mode: X = values, Y = categories)
+        if (showAxisTitles) {
+            const titleColor = this.isHighContrast ? this.colorPalette.foreground.value : axisLabelColor;
+            if (xAxisTitle) {
+                this.chartGroup.append("text")
+                    .classed("axis-title x-axis-title", true)
+                    .attr("x", plotWidth / 2)
+                    .attr("y", plotHeight + hMargin.bottom - 30 + axisTitleFontSize + 18)
+                    .attr("text-anchor", "middle")
+                    .attr("font-size", `${axisTitleFontSize}px`)
+                    .attr("font-weight", "600")
+                    .attr("fill", titleColor)
+                    .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+                    .text(xAxisTitle);
+            }
+            if (yAxisTitle) {
+                this.chartGroup.append("text")
+                    .classed("axis-title y-axis-title", true)
+                    .attr("x", -(plotHeight / 2))
+                    .attr("y", -(hMargin.left - 100 + axisTitleFontSize / 2))
+                    .attr("text-anchor", "middle")
+                    .attr("transform", "rotate(-90)")
+                    .attr("font-size", `${axisTitleFontSize}px`)
+                    .attr("font-weight", "600")
+                    .attr("fill", titleColor)
+                    .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+                    .text(yAxisTitle);
+            }
         }
     }
 
@@ -546,11 +757,19 @@ export class Visual implements IVisual {
             .text(d => formatValue(d, "auto", 0));
 
         // Axis line
-        this.chartGroup.append("line")
+        this.chartGroup.append("line").classed("axis-line", true)
             .attr("x1", 0).attr("y1", 0)
             .attr("x2", 0).attr("y2", plotHeight)
             .attr("stroke", axisLineColor)
             .attr("stroke-width", 1);
+
+        // High contrast overrides for Y axis
+        if (this.isHighContrast) {
+            const hcFg = this.colorPalette.foreground.value;
+            this.chartGroup.selectAll(".grid-line").attr("stroke", hcFg).attr("opacity", 0.3);
+            this.chartGroup.selectAll(".y-tick").attr("fill", hcFg);
+            this.chartGroup.selectAll(".axis-line").attr("stroke", hcFg);
+        }
     }
 
     /** Draw X axis with category labels */
@@ -562,7 +781,7 @@ export class Visual implements IVisual {
         const rotate = barCount > 6;
 
         // Axis line
-        this.chartGroup.append("line")
+        this.chartGroup.append("line").classed("axis-line", true)
             .attr("x1", 0).attr("y1", plotHeight)
             .attr("x2", xScale.range()[1]).attr("y2", plotHeight)
             .attr("stroke", axisLineColor)
@@ -587,10 +806,21 @@ export class Visual implements IVisual {
                 return `rotate(-45, ${cx}, ${plotHeight + 12})`;
             })
             .text(d => d.length > 14 ? d.substring(0, 12) + "..." : d);
+
+        // High contrast overrides for X axis
+        if (this.isHighContrast) {
+            const hcFg = this.colorPalette.foreground.value;
+            this.chartGroup.selectAll(".x-label").attr("fill", hcFg);
+            this.chartGroup.selectAll(".axis-line").attr("stroke", hcFg);
+        }
     }
 
     /** Render empty state message */
     private renderEmpty(width: number, height: number): void {
+        const emptyText = this.localizationManager.getDisplayName("Empty_Title")
+            || "Add Category, Start Value, and Variance fields to build the waterfall.";
+        const fillColor = this.isHighContrast ? this.colorPalette.foreground.value : "#5e5d5a";
+
         this.svg.append("text")
             .classed("empty-message", true)
             .attr("x", width / 2)
@@ -598,9 +828,9 @@ export class Visual implements IVisual {
             .attr("text-anchor", "middle")
             .attr("dominant-baseline", "central")
             .attr("font-size", "14px")
-            .attr("fill", "#5e5d5a")
+            .attr("fill", fillColor)
             .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
-            .text("Add Category, Start Value, and Variance fields to build the waterfall.");
+            .text(emptyText);
     }
 
     public destroy(): void {

@@ -3,5 +3,7 @@
     "Visual_Long_Description": "Vertical and horizontal waterfall charts with start value, per-category variance bars, connector lines, and end totals. Sort by variance, category, or absolute value.",
     "Role_Category": "Category",
     "Role_StartValue": "Start Value",
-    "Role_Variance": "Variance"
+    "Role_Variance": "Variance",
+    "Empty_Title": "Add Category, Start Value, and Variance fields to build the waterfall.",
+    "Overflow_Other": "Other"
 }
