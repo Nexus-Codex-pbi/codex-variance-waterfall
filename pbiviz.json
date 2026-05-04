@@ -4,12 +4,12 @@
     "displayName": "Codex Variance Waterfall",
     "guid": "codexVarianceWaterfallC1D2E3F4A5B6C7D8E9F0A1B2C3D4E5F6",
     "visualClassName": "Visual",
-    "version": "1.0.0.0",
+    "version": "1.0.0.1",
     "description": "Variance waterfall showing forecast-to-actual decomposition with cumulative running totals.",
     "supportUrl": "https://nexuscodex.nexus/support",
     "gitHubUrl": "https://github.com/Nexus-Codex-pbi/codex-variance-waterfall"
   },
-  "apiVersion": "5.10.0",
+  "apiVersion": "5.11.0",
   "author": {
     "name": "Nexus Codex",
     "email": "support@nexuscodex.nexus"

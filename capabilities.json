@@ -1,177 +1,344 @@
 {
-    "dataRoles": [
-        {
-            "displayName": "Category",
-            "name": "category",
-            "kind": "Grouping",
-            "description": "Breakdown dimension (e.g. BatteryCode or Beat)"
-        },
-        {
-            "displayName": "Start Value",
-            "name": "startValue",
-            "kind": "Measure",
-            "description": "Opening total (e.g. forecast qty)"
-        },
-        {
-            "displayName": "Variance",
-            "name": "variance",
-            "kind": "Measure",
-            "description": "Per-category variance amount"
-        }
-    ],
-    "objects": {
-        "waterfallSettings": {
-            "properties": {
-                "positiveColor": {
-                    "type": { "fill": { "solid": { "color": true } } }
-                },
-                "negativeColor": {
-                    "type": { "fill": { "solid": { "color": true } } }
-                },
-                "totalColor": {
-                    "type": { "fill": { "solid": { "color": true } } }
-                },
-                "connectorLine": {
-                    "type": { "bool": true }
-                },
-                "connectorColor": {
-                    "type": { "fill": { "solid": { "color": true } } }
-                },
-                "showEndTotal": {
-                    "type": { "bool": true }
-                },
-                "startLabel": {
-                    "type": { "text": true }
-                },
-                "endLabel": {
-                    "type": { "text": true }
-                },
-                "barWidth": {
-                    "type": { "numeric": true }
-                },
-                "orientation": {
-                    "type": {
-                        "enumeration": [
-                            { "displayName": "Vertical", "value": "vertical" },
-                            { "displayName": "Horizontal", "value": "horizontal" }
-                        ]
-                    }
-                }
-            }
-        },
-        "sortSettings": {
-            "properties": {
-                "sortBy": {
-                    "type": {
-                        "enumeration": [
-                            { "displayName": "Variance (High to Low)", "value": "variance_desc" },
-                            { "displayName": "Variance (Low to High)", "value": "variance_asc" },
-                            { "displayName": "Category (A-Z)", "value": "category" },
-                            { "displayName": "Absolute (High to Low)", "value": "absolute_desc" }
-                        ]
-                    }
-                },
-                "maxCategories": {
-                    "type": { "numeric": true }
-                }
-            }
-        },
-        "labelSettings": {
-            "properties": {
-                "showValues": {
-                    "type": { "bool": true }
-                },
-                "valuePosition": {
-                    "type": {
-                        "enumeration": [
-                            { "displayName": "Inside", "value": "inside" },
-                            { "displayName": "Outside", "value": "outside" },
-                            { "displayName": "Auto", "value": "auto" }
-                        ]
-                    }
-                },
-                "fontSize": {
-                    "type": { "formatting": { "fontSize": true } }
-                },
-                "displayUnits": {
-                    "type": {
-                        "enumeration": [
-                            { "displayName": "Auto", "value": "auto" },
-                            { "displayName": "None", "value": "none" },
-                            { "displayName": "Thousands", "value": "thousands" },
-                            { "displayName": "Millions", "value": "millions" }
-                        ]
-                    }
-                },
-                "decimalPlaces": {
-                    "type": { "numeric": true }
-                },
-                "valueFontColor": {
-                    "type": { "fill": { "solid": { "color": true } } }
-                }
-            }
-        },
-        "axisSettings": {
-            "properties": {
-                "showAxisLabels": {
-                    "type": { "bool": true }
-                },
-                "axisLabelColor": {
-                    "type": { "fill": { "solid": { "color": true } } }
-                },
-                "axisLabelFontSize": {
-                    "type": { "numeric": true }
-                },
-                "gridlineColor": {
-                    "type": { "fill": { "solid": { "color": true } } }
-                },
-                "gridlineWidth": {
-                    "type": { "numeric": true }
-                },
-                "showGridlines": {
-                    "type": { "bool": true }
-                },
-                "axisLineColor": {
-                    "type": { "fill": { "solid": { "color": true } } }
-                },
-                "showAxisTitles": {
-                    "type": { "bool": true }
-                },
-                "xAxisTitle": {
-                    "type": { "text": true }
-                },
-                "yAxisTitle": {
-                    "type": { "text": true }
-                }
-            }
-        }
+  "dataRoles": [
+    {
+      "displayName": "Category",
+      "name": "category",
+      "kind": "Grouping",
+      "description": "Breakdown dimension (e.g. BatteryCode or Beat)"
     },
-    "dataViewMappings": [
-        {
-            "categorical": {
-                "categories": {
-                    "for": { "in": "category" },
-                    "dataReductionAlgorithm": { "top": { "count": 1000 } }
-                },
-                "values": {
-                    "select": [
-                        { "bind": { "to": "startValue" } },
-                        { "bind": { "to": "variance" } }
-                    ]
-                }
-            }
-        }
-    ],
-    "supportsHighlight": true,
-    "supportsKeyboardFocus": true,
-    "supportsLandingPage": true,
-    "supportsEmptyDataView": true,
-    "supportsMultiVisualSelection": true,
-    "tooltips": {
-        "supportedTypes": {
-            "default": true,
-            "canvas": true
-        }
+    {
+      "displayName": "Start Value",
+      "name": "startValue",
+      "kind": "Measure",
+      "description": "Opening total (e.g. forecast qty)"
     },
-    "privileges": []
+    {
+      "displayName": "Variance",
+      "name": "variance",
+      "kind": "Measure",
+      "description": "Per-category variance amount"
+    }
+  ],
+  "objects": {
+    "waterfallSettings": {
+      "properties": {
+        "positiveColor": {
+          "type": {
+            "fill": {
+              "solid": {
+                "color": true
+              }
+            }
+          },
+          "displayName": "Positive Color"
+        },
+        "negativeColor": {
+          "type": {
+            "fill": {
+              "solid": {
+                "color": true
+              }
+            }
+          },
+          "displayName": "Negative Color"
+        },
+        "totalColor": {
+          "type": {
+            "fill": {
+              "solid": {
+                "color": true
+              }
+            }
+          },
+          "displayName": "Total Color"
+        },
+        "connectorLine": {
+          "type": {
+            "bool": true
+          },
+          "displayName": "Connector Line"
+        },
+        "connectorColor": {
+          "type": {
+            "fill": {
+              "solid": {
+                "color": true
+              }
+            }
+          },
+          "displayName": "Connector Color"
+        },
+        "showEndTotal": {
+          "type": {
+            "bool": true
+          },
+          "displayName": "Show End Total"
+        },
+        "startLabel": {
+          "type": {
+            "text": true
+          },
+          "displayName": "Start Label"
+        },
+        "endLabel": {
+          "type": {
+            "text": true
+          },
+          "displayName": "End Label"
+        },
+        "barWidth": {
+          "type": {
+            "numeric": true
+          },
+          "displayName": "Bar Width"
+        },
+        "orientation": {
+          "type": {
+            "enumeration": [
+              {
+                "displayName": "Vertical",
+                "value": "vertical"
+              },
+              {
+                "displayName": "Horizontal",
+                "value": "horizontal"
+              }
+            ]
+          },
+          "displayName": "Orientation"
+        }
+      },
+      "displayName": "Waterfall Settings"
+    },
+    "sortSettings": {
+      "properties": {
+        "sortBy": {
+          "type": {
+            "enumeration": [
+              {
+                "displayName": "Variance (High to Low)",
+                "value": "variance_desc"
+              },
+              {
+                "displayName": "Variance (Low to High)",
+                "value": "variance_asc"
+              },
+              {
+                "displayName": "Category (A-Z)",
+                "value": "category"
+              },
+              {
+                "displayName": "Absolute (High to Low)",
+                "value": "absolute_desc"
+              }
+            ]
+          },
+          "displayName": "Sort By"
+        },
+        "maxCategories": {
+          "type": {
+            "numeric": true
+          },
+          "displayName": "Max Categories"
+        }
+      },
+      "displayName": "Sort Settings"
+    },
+    "labelSettings": {
+      "properties": {
+        "showValues": {
+          "type": {
+            "bool": true
+          },
+          "displayName": "Show Values"
+        },
+        "valuePosition": {
+          "type": {
+            "enumeration": [
+              {
+                "displayName": "Inside",
+                "value": "inside"
+              },
+              {
+                "displayName": "Outside",
+                "value": "outside"
+              },
+              {
+                "displayName": "Auto",
+                "value": "auto"
+              }
+            ]
+          },
+          "displayName": "Value Position"
+        },
+        "fontSize": {
+          "type": {
+            "formatting": {
+              "fontSize": true
+            }
+          },
+          "displayName": "Font Size"
+        },
+        "displayUnits": {
+          "type": {
+            "enumeration": [
+              {
+                "displayName": "Auto",
+                "value": "auto"
+              },
+              {
+                "displayName": "None",
+                "value": "none"
+              },
+              {
+                "displayName": "Thousands",
+                "value": "thousands"
+              },
+              {
+                "displayName": "Millions",
+                "value": "millions"
+              }
+            ]
+          },
+          "displayName": "Display Units"
+        },
+        "decimalPlaces": {
+          "type": {
+            "numeric": true
+          },
+          "displayName": "Decimal Places"
+        },
+        "valueFontColor": {
+          "type": {
+            "fill": {
+              "solid": {
+                "color": true
+              }
+            }
+          },
+          "displayName": "Value Font Color"
+        }
+      },
+      "displayName": "Label Settings"
+    },
+    "axisSettings": {
+      "properties": {
+        "showAxisLabels": {
+          "type": {
+            "bool": true
+          },
+          "displayName": "Show Axis Labels"
+        },
+        "axisLabelColor": {
+          "type": {
+            "fill": {
+              "solid": {
+                "color": true
+              }
+            }
+          },
+          "displayName": "Axis Label Color"
+        },
+        "axisLabelFontSize": {
+          "type": {
+            "numeric": true
+          },
+          "displayName": "Axis Label Font Size"
+        },
+        "gridlineColor": {
+          "type": {
+            "fill": {
+              "solid": {
+                "color": true
+              }
+            }
+          },
+          "displayName": "Gridline Color"
+        },
+        "gridlineWidth": {
+          "type": {
+            "numeric": true
+          },
+          "displayName": "Gridline Width"
+        },
+        "showGridlines": {
+          "type": {
+            "bool": true
+          },
+          "displayName": "Show Gridlines"
+        },
+        "axisLineColor": {
+          "type": {
+            "fill": {
+              "solid": {
+                "color": true
+              }
+            }
+          },
+          "displayName": "Axis Line Color"
+        },
+        "showAxisTitles": {
+          "type": {
+            "bool": true
+          },
+          "displayName": "Show Axis Titles"
+        },
+        "xAxisTitle": {
+          "type": {
+            "text": true
+          },
+          "displayName": "X Axis Title"
+        },
+        "yAxisTitle": {
+          "type": {
+            "text": true
+          },
+          "displayName": "Y Axis Title"
+        }
+      },
+      "displayName": "Axis Settings"
+    }
+  },
+  "dataViewMappings": [
+    {
+      "categorical": {
+        "categories": {
+          "for": {
+            "in": "category"
+          },
+          "dataReductionAlgorithm": {
+            "top": {
+              "count": 30000
+            }
+          }
+        },
+        "values": {
+          "select": [
+            {
+              "bind": {
+                "to": "startValue"
+              }
+            },
+            {
+              "bind": {
+                "to": "variance"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "supportsHighlight": true,
+  "supportsKeyboardFocus": true,
+  "supportsLandingPage": true,
+  "supportsEmptyDataView": true,
+  "supportsMultiVisualSelection": true,
+  "tooltips": {
+    "supportedTypes": {
+      "default": true,
+      "canvas": true
+    }
+  },
+  "privileges": []
 }
