@@ -358,8 +358,16 @@ export class Visual implements IVisual {
     ): void {
         // In vertical mode: X = categories, Y = values
         const axisTitleFontSize = axisLabelFontSize + 2;
-        const extraBottom = (showAxisTitles && xAxisTitle) ? axisTitleFontSize + 8 : 0;
-        const extraLeft = (showAxisTitles && yAxisTitle) ? axisTitleFontSize + 8 : 0;
+        // Reserve: title height + gap from tick row above + bottom canvas pad below
+        const AXIS_TITLE_TICK_GAP = 10;
+        const AXIS_TITLE_BOTTOM_PAD = 8;
+        const AXIS_TITLE_LEFT_GAP = 10;
+        const extraBottom = (showAxisTitles && xAxisTitle)
+            ? axisTitleFontSize + AXIS_TITLE_TICK_GAP + AXIS_TITLE_BOTTOM_PAD
+            : 0;
+        const extraLeft = (showAxisTitles && yAxisTitle)
+            ? axisTitleFontSize + AXIS_TITLE_LEFT_GAP
+            : 0;
         const effectiveMargin = {
             top: this.margin.top,
             right: this.margin.right,
@@ -441,10 +449,13 @@ export class Visual implements IVisual {
         if (showAxisTitles) {
             const titleColor = this.isHighContrast ? this.colorPalette.foreground.value : axisLabelColor;
             if (xAxisTitle) {
+                // Position title baseline AXIS_TITLE_BOTTOM_PAD above canvas bottom edge,
+                // with AXIS_TITLE_TICK_GAP between tick row and title.
+                const titleY = plotHeight + axisLabelFontSize + AXIS_TITLE_TICK_GAP + axisTitleFontSize;
                 this.chartGroup.append("text")
                     .classed("axis-title x-axis-title", true)
                     .attr("x", plotWidth / 2)
-                    .attr("y", plotHeight + effectiveMargin.bottom - this.margin.bottom + axisTitleFontSize + 4)
+                    .attr("y", titleY)
                     .attr("text-anchor", "middle")
                     .attr("font-size", `${axisTitleFontSize}px`)
                     .attr("font-weight", "600")
@@ -453,12 +464,16 @@ export class Visual implements IVisual {
                     .text(xAxisTitle);
             }
             if (yAxisTitle) {
+                // Single transform string ensures translate applied BEFORE rotation
+                // (d3 .attr() order is otherwise honoured but separate transform attrs
+                // can lose the rotate when written sequentially in some pipelines).
+                const titleX = -(extraLeft - AXIS_TITLE_LEFT_GAP / 2);
+                const titleY = plotHeight / 2;
                 this.chartGroup.append("text")
                     .classed("axis-title y-axis-title", true)
-                    .attr("x", -(plotHeight / 2))
-                    .attr("y", -(effectiveMargin.left - this.margin.left + axisTitleFontSize / 2))
+                    .attr("transform", `translate(${titleX},${titleY}) rotate(-90)`)
                     .attr("text-anchor", "middle")
-                    .attr("transform", "rotate(-90)")
+                    .attr("dominant-baseline", "middle")
                     .attr("font-size", `${axisTitleFontSize}px`)
                     .attr("font-weight", "600")
                     .attr("fill", titleColor)
@@ -480,8 +495,15 @@ export class Visual implements IVisual {
     ): void {
         // Horizontal: categories on Y, values on X
         const axisTitleFontSize = axisLabelFontSize + 2;
-        const extraBottom = (showAxisTitles && xAxisTitle) ? axisTitleFontSize + 8 : 0;
-        const extraLeft = (showAxisTitles && yAxisTitle) ? axisTitleFontSize + 8 : 0;
+        const AXIS_TITLE_TICK_GAP = 10;
+        const AXIS_TITLE_BOTTOM_PAD = 8;
+        const AXIS_TITLE_LEFT_GAP = 10;
+        const extraBottom = (showAxisTitles && xAxisTitle)
+            ? axisTitleFontSize + AXIS_TITLE_TICK_GAP + AXIS_TITLE_BOTTOM_PAD
+            : 0;
+        const extraLeft = (showAxisTitles && yAxisTitle)
+            ? axisTitleFontSize + AXIS_TITLE_LEFT_GAP
+            : 0;
         const hMargin = { top: 20, right: 30, bottom: 30 + extraBottom, left: 100 + extraLeft };
         const plotWidth = width - hMargin.left - hMargin.right;
         const plotHeight = height - hMargin.top - hMargin.bottom;
@@ -637,10 +659,11 @@ export class Visual implements IVisual {
         if (showAxisTitles) {
             const titleColor = this.isHighContrast ? this.colorPalette.foreground.value : axisLabelColor;
             if (xAxisTitle) {
+                const titleY = plotHeight + axisLabelFontSize + AXIS_TITLE_TICK_GAP + axisTitleFontSize;
                 this.chartGroup.append("text")
                     .classed("axis-title x-axis-title", true)
                     .attr("x", plotWidth / 2)
-                    .attr("y", plotHeight + hMargin.bottom - 30 + axisTitleFontSize + 18)
+                    .attr("y", titleY)
                     .attr("text-anchor", "middle")
                     .attr("font-size", `${axisTitleFontSize}px`)
                     .attr("font-weight", "600")
@@ -649,12 +672,13 @@ export class Visual implements IVisual {
                     .text(xAxisTitle);
             }
             if (yAxisTitle) {
+                const titleX = -(extraLeft - AXIS_TITLE_LEFT_GAP / 2);
+                const titleY = plotHeight / 2;
                 this.chartGroup.append("text")
                     .classed("axis-title y-axis-title", true)
-                    .attr("x", -(plotHeight / 2))
-                    .attr("y", -(hMargin.left - 100 + axisTitleFontSize / 2))
+                    .attr("transform", `translate(${titleX},${titleY}) rotate(-90)`)
                     .attr("text-anchor", "middle")
-                    .attr("transform", "rotate(-90)")
+                    .attr("dominant-baseline", "middle")
                     .attr("font-size", `${axisTitleFontSize}px`)
                     .attr("font-weight", "600")
                     .attr("fill", titleColor)
