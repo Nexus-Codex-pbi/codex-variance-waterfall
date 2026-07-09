@@ -8,6 +8,8 @@ import FormattingSettingsCard = formattingSettings.SimpleCard;
 import FormattingSettingsSlice = formattingSettings.Slice;
 import FormattingSettingsModel = formattingSettings.Model;
 
+import { BackgroundSettings } from "../../_shared/formatting/backgroundSettings";
+
 const ConstantOrRule = powerbi.VisualEnumerationInstanceKinds.ConstantOrRule;
 
 /**
@@ -309,6 +311,27 @@ export class VisualFormattingSettingsModel extends FormattingSettingsModel {
     sortCard = new SortSettingsCard();
     labelCard = new LabelSettingsCard();
     axisCard = new AxisSettingsCard();
+    background = new BackgroundSettings();
 
-    cards = [this.waterfallCard, this.sortCard, this.labelCard, this.axisCard];
+    constructor() {
+        super();
+        // D-06 default-preservation override (per-visual instance only —
+        // _shared/formatting/backgroundSettings.ts itself is untouched,
+        // D-11): pbiVarianceWaterfall's PRE-EXISTING default was "no
+        // background painted" — the SVG only ever got a background-color
+        // CSS style under high contrast (colorPalette.background.value);
+        // the non-high-contrast path explicitly cleared it to `null`
+        // (confirmed via the pre-plan `this.svg.style("background-color",
+        // null)` branch). The frozen shared Background card's own default
+        // (opaque white, transparency 0) would regress every old saved
+        // report that never touched this brand-new property to a
+        // suddenly-opaque white background. Overriding the TRANSPARENCY
+        // default to 100 on this instance makes toRgba(...) resolve to
+        // alpha 0 regardless of colour — pixel-identical to "nothing
+        // painted" — while still exposing a real, working Colour +
+        // Transparency control for any report that opts in.
+        this.background.transparency.value = 100;
+    }
+
+    cards = [this.waterfallCard, this.sortCard, this.labelCard, this.axisCard, this.background];
 }

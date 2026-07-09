@@ -21,8 +21,12 @@ import VisualTooltipDataItem = powerbi.extensibility.VisualTooltipDataItem;
 import DataView = powerbi.DataView;
 import DataViewCategorical = powerbi.DataViewCategorical;
 
+import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
+import { ColorHelper } from "powerbi-visuals-utils-colorutils";
+
 import { VisualFormattingSettingsModel } from "./settings";
 import { formatValue, clamp, contrastText } from "./utils";
+import { toRgba } from "../../_shared/formatting/colorHelpers";
 
 type Selection<T extends d3Selection.BaseType> = d3Selection.Selection<T, unknown, null, undefined>;
 
@@ -47,6 +51,7 @@ export class Visual implements IVisual {
     private localizationManager: ILocalizationManager;
     private isHighContrast: boolean;
     private svg: Selection<SVGSVGElement>;
+    private backgroundRect: Selection<SVGRectElement>;
     private chartGroup: Selection<SVGGElement>;
     private formattingSettings: VisualFormattingSettingsModel;
     private formattingSettingsService: FormattingSettingsService;
@@ -55,6 +60,10 @@ export class Visual implements IVisual {
     private currentBars: WaterfallBar[] = [];
     private currentDisplayUnits: string = "auto";
     private currentDecimalPlaces: number = 0;
+
+    // fx (TRANS-04) state
+    private categoricalCategories: powerbi.DataViewCategoryColumn | undefined;
+    private positiveColorHelper: ColorHelper | null = null;
 
     // Margins
     private readonly margin = { top: 24, right: 20, bottom: 60, left: 64 };
@@ -82,6 +91,11 @@ export class Visual implements IVisual {
         this.svg = d3Selection.select(this.target)
             .append("svg")
             .classed("variance-waterfall", true);
+
+        // Dedicated background layer (D-05) — persistent SVG rect, first
+        // child so it never paints over bars/labels/axes. Never whole-
+        // root/target opacity.
+        this.backgroundRect = this.svg.append("rect").classed("wf-background", true);
 
         this.chartGroup = this.svg.append("g").classed("chart-area", true);
 
@@ -117,6 +131,22 @@ export class Visual implements IVisual {
                 e.stopPropagation();
             }
         });
+    }
+
+    /**
+     * Resolve a bar's fill colour, applying the Positive Colour fx rule
+     * (TRANS-04) per-instance for category-linked positive bars via
+     * ColorHelper.getColorForMeasure against categoricalCategories.objects.
+     * Total bars and the aggregated "Other" bar (categoryIndex -1, no real
+     * selectionId) always fall back to the static format-pane values.
+     */
+    private resolveBarColor(d: WaterfallBar, positiveColor: string, negativeColor: string, totalColor: string): string {
+        if (d.type === "total") return totalColor;
+        if (d.type === "positive" && d.categoryIndex >= 0 && this.positiveColorHelper) {
+            const instanceObjects = this.categoricalCategories?.objects?.[d.categoryIndex];
+            return this.positiveColorHelper.getColorForMeasure(instanceObjects, "positiveColor");
+        }
+        return d.type === "positive" ? positiveColor : negativeColor;
     }
 
     /** Find which WaterfallBar the mouse is over by checking SVG rect elements */
@@ -162,6 +192,27 @@ export class Visual implements IVisual {
             this.svg.style("background-color", null);
         }
 
+        // ─── Dedicated background layer (D-05) ─────────────────────────
+        // Suite-wide shared Background card (Colour + Transparency,
+        // sourced from _shared/formatting/), painted as a persistent SVG
+        // rect (first child, behind `this.chartGroup`) — never whole-
+        // root/target opacity; distinct from the pre-existing high-contrast
+        // svg style above, which is left untouched. Its transparency
+        // default is overridden to 100 in settings.ts specifically so an
+        // OLD saved report (this property never previously existed)
+        // renders alpha 0 — pixel-identical to painting nothing (D-06) —
+        // while still exposing a real, working Colour + Transparency
+        // control.
+        this.backgroundRect.attr("width", width).attr("height", height);
+        if (this.isHighContrast) {
+            this.backgroundRect.attr("fill", "none");
+        } else {
+            const background = this.formattingSettings.background;
+            const bgHex = background.backgroundColor.value?.value ?? "#ffffff";
+            const bgTransparencyPct = background.transparency.value ?? 100;
+            this.backgroundRect.attr("fill", toRgba(bgHex, bgTransparencyPct));
+        }
+
         // Validate data
         if (!dataView || !dataView.categorical || !dataView.categorical.categories
             || !dataView.categorical.categories.length
@@ -173,6 +224,7 @@ export class Visual implements IVisual {
 
         const categorical: DataViewCategorical = dataView.categorical;
         const categories = categorical.categories[0].values as string[];
+        this.categoricalCategories = categorical.categories[0];
 
         // Find startValue and variance columns by role
         let startValueCol: powerbi.DataViewValueColumn | null = null;
@@ -320,6 +372,29 @@ export class Visual implements IVisual {
         this.currentDisplayUnits = displayUnits;
         this.currentDecimalPlaces = decimalPlaces;
 
+        // ─── Conditional formatting (fx) wiring — Positive Colour
+        // (TRANS-04). A bare `instanceKind: ConstantOrRule` declaration in
+        // settings.ts does not make the fx button functional on its own —
+        // it also needs a `selector` (dataViewWildcard, so a rule can match
+        // this measure's category instances/totals) and an
+        // `altConstantSelector` bound to a concrete selectionId for the
+        // "set for all" swatch edit path. Resolved per-bar at render via
+        // ColorHelper.getColorForMeasure against each category's own
+        // per-instance object overrides (categoricalCategories.objects[categoryIndex]),
+        // via resolveBarColor() below.
+        const firstDataBar = bars.find(b => b.selectionId);
+        wf.positiveColor.selector = dataViewWildcard.createDataViewWildcardSelector(
+            dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
+        );
+        wf.positiveColor.altConstantSelector = firstDataBar?.selectionId
+            ? firstDataBar.selectionId.getSelector()
+            : undefined;
+        this.positiveColorHelper = new ColorHelper(
+            this.host.colorPalette,
+            { objectName: "waterfallSettings", propertyName: "positiveColor" },
+            wf.positiveColor.value.value
+        );
+
         const orientation = String(wf.orientation.value?.value || "vertical");
 
         if (orientation === "horizontal") {
@@ -417,7 +492,7 @@ export class Visual implements IVisual {
             .attr("y", d => yScale(Math.max(d.cumStart, d.cumEnd)))
             .attr("width", xScale.bandwidth())
             .attr("height", d => Math.abs(yScale(d.cumStart) - yScale(d.cumEnd)))
-            .attr("fill", d => d.type === "total" ? totalColor : d.type === "positive" ? positiveColor : negativeColor)
+            .attr("fill", d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor))
             .attr("rx", 2).attr("ry", 2);
 
         // High contrast overrides for vertical bars and connectors
@@ -586,7 +661,7 @@ export class Visual implements IVisual {
             .attr("y", d => yScale(d.label) ?? 0)
             .attr("width", d => Math.abs(xScale(d.cumEnd) - xScale(d.cumStart)))
             .attr("height", yScale.bandwidth())
-            .attr("fill", d => d.type === "total" ? totalColor : d.type === "positive" ? positiveColor : negativeColor)
+            .attr("fill", d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor))
             .attr("rx", 2).attr("ry", 2);
 
         // High contrast overrides for horizontal bars, connectors, axes, gridlines, and labels
@@ -631,7 +706,7 @@ export class Visual implements IVisual {
                     const barW = barRight - barLeft;
                     const pos = this.resolvePosition(valuePosition, barW, fontSize * 3);
                     if (pos === "inside") {
-                        const c = d.type === "total" ? totalColor : d.type === "positive" ? positiveColor : negativeColor;
+                        const c = this.resolveBarColor(d, positiveColor, negativeColor, totalColor);
                         return contrastText(c);
                     }
                     return customValueColor && customValueColor.length > 0 ? customValueColor : "#333";
@@ -721,7 +796,7 @@ export class Visual implements IVisual {
                 const barBottom = yScale(Math.min(d.cumStart, d.cumEnd));
                 const pos = this.resolvePosition(valuePosition, barBottom - barTop, fontSize);
                 if (pos === "inside") {
-                    const c = d.type === "total" ? totalColor : d.type === "positive" ? positiveColor : negativeColor;
+                    const c = this.resolveBarColor(d, positiveColor, negativeColor, totalColor);
                     return contrastText(c);
                 }
                 return customValueColor && customValueColor.length > 0 ? customValueColor : "#333";
