@@ -9,8 +9,15 @@ import FormattingSettingsSlice = formattingSettings.Slice;
 import FormattingSettingsModel = formattingSettings.Model;
 
 import { BackgroundSettings } from "../../_shared/formatting/backgroundSettings";
+import { TitleSettings } from "../../_shared/formatting/titleSettings";
+import { alignSlice, alignSelfFor, textAlignFor } from "../../_shared/formatting/textFormatting";
 
 const ConstantOrRule = powerbi.VisualEnumerationInstanceKinds.ConstantOrRule;
+
+// TitleSettings + text-formatting helpers now live in _shared/formatting/
+// (D-13, D-14). Re-exported so visual.ts can import them from "./settings"
+// (stable import path).
+export { TitleSettings, alignSlice, alignSelfFor, textAlignFor };
 
 /**
  * Waterfall Appearance Card
@@ -164,11 +171,33 @@ class LabelSettingsCard extends FormattingSettingsCard {
         value: { displayName: "Auto", value: "auto" }
     });
 
+    // Bar value/data label text — FontControl composite reuses the
+    // existing bare "fontSize" property name (D-06/D-07: additive-only, no
+    // schema rename) alongside NEW sibling properties (family/bold/italic/
+    // underline). Bold defaults true to match the previously-hardcoded
+    // font-weight:600 on all bar-label render sites (render-nothing-default
+    // parity — see weightFor idiom in visual.ts).
     fontSize = new formattingSettings.NumUpDown({
         name: "fontSize",
         displayName: "Font Size",
         description: "Label font size in points",
         value: 11
+    });
+
+    fontFamily = new formattingSettings.FontPicker({
+        name: "fontFamily",
+        displayName: "Font Family",
+        value: "Segoe UI, Tahoma, Geneva, Verdana, sans-serif"
+    });
+
+    bold = new formattingSettings.ToggleSwitch({ name: "bold", displayName: "Bold", value: true });
+    italic = new formattingSettings.ToggleSwitch({ name: "italic", displayName: "Italic", value: false });
+    underline = new formattingSettings.ToggleSwitch({ name: "underline", displayName: "Underline", value: false });
+
+    valueFont = new formattingSettings.FontControl({
+        name: "valueFont", displayName: "Font",
+        fontFamily: this.fontFamily, fontSize: this.fontSize,
+        bold: this.bold, italic: this.italic, underline: this.underline,
     });
 
     displayUnits = new formattingSettings.ItemDropdown({
@@ -204,7 +233,7 @@ class LabelSettingsCard extends FormattingSettingsCard {
     slices: Array<FormattingSettingsSlice> = [
         this.showValues,
         this.valuePosition,
-        this.fontSize,
+        this.valueFont,
         this.valueFontColor,
         this.displayUnits,
         this.decimalPlaces
@@ -230,11 +259,33 @@ class AxisSettingsCard extends FormattingSettingsCard {
         instanceKind: ConstantOrRule
     });
 
+    // Axis/category tick label text — FontControl composite reuses the
+    // existing "axisLabelFontSize" property name (D-06/D-07: additive-only,
+    // no schema rename) alongside NEW sibling properties (family/bold/
+    // italic/underline). Bold defaults false (off-state renders the
+    // pre-existing unset/normal font-weight — no font-weight was ever
+    // hardcoded on tick labels, unlike axis titles' weight:600).
     axisLabelFontSize = new formattingSettings.NumUpDown({
         name: "axisLabelFontSize",
         displayName: "Axis Label Font Size",
         description: "Font size for axis labels in pixels",
         value: 10
+    });
+
+    axisLabelFontFamily = new formattingSettings.FontPicker({
+        name: "axisLabelFontFamily",
+        displayName: "Axis Label Font Family",
+        value: "Segoe UI, Tahoma, Geneva, Verdana, sans-serif"
+    });
+
+    axisLabelBold = new formattingSettings.ToggleSwitch({ name: "axisLabelBold", displayName: "Axis Label Bold", value: false });
+    axisLabelItalic = new formattingSettings.ToggleSwitch({ name: "axisLabelItalic", displayName: "Axis Label Italic", value: false });
+    axisLabelUnderline = new formattingSettings.ToggleSwitch({ name: "axisLabelUnderline", displayName: "Axis Label Underline", value: false });
+
+    axisLabelFont = new formattingSettings.FontControl({
+        name: "axisLabelFont", displayName: "Axis Label Font",
+        fontFamily: this.axisLabelFontFamily, fontSize: this.axisLabelFontSize,
+        bold: this.axisLabelBold, italic: this.axisLabelItalic, underline: this.axisLabelUnderline,
     });
 
     gridlineColor = new formattingSettings.ColorPicker({
@@ -292,7 +343,7 @@ class AxisSettingsCard extends FormattingSettingsCard {
     slices: Array<FormattingSettingsSlice> = [
         this.showAxisLabels,
         this.axisLabelColor,
-        this.axisLabelFontSize,
+        this.axisLabelFont,
         this.gridlineColor,
         this.gridlineWidth,
         this.showGridlines,
@@ -307,6 +358,7 @@ class AxisSettingsCard extends FormattingSettingsCard {
  * Visual Formatting Settings Model
  */
 export class VisualFormattingSettingsModel extends FormattingSettingsModel {
+    titleSettings = new TitleSettings();
     waterfallCard = new WaterfallSettingsCard();
     sortCard = new SortSettingsCard();
     labelCard = new LabelSettingsCard();
@@ -333,5 +385,5 @@ export class VisualFormattingSettingsModel extends FormattingSettingsModel {
         this.background.transparency.value = 100;
     }
 
-    cards = [this.waterfallCard, this.sortCard, this.labelCard, this.axisCard, this.background];
+    cards = [this.titleSettings, this.waterfallCard, this.sortCard, this.labelCard, this.axisCard, this.background];
 }

@@ -53,3 +53,28 @@
 
 ## 9. Context Menu Regression (CERT-01)
 - [ ] Right-click anywhere within the visual still opens the Power BI context menu after the background transparency change (existing contextmenu listener on `this.target`, unchanged by this plan)
+
+## 10. Visual Title (TITLE-01)
+- [ ] Title card appears in the format pane ("Visual Title") with Show Title (off by default), Title Text, Font, Alignment, Font Color
+- [ ] Show Title off (default) renders no title text and reserves no extra vertical space — old saved report (no title properties set) is pixel-identical to pre-upgrade (D-06)
+- [ ] Show Title on + Title Text set renders the title as a persistent SVG text element above the chart in BOTH Vertical and Horizontal orientation, reserving vertical space (chart shifts down)
+- [ ] Title Font (family/size/bold/italic/underline) and Alignment (left/center/right, mapped to text-anchor) apply correctly
+- [ ] Title Font Color applies; high contrast mode overrides to the theme foreground colour
+
+## 11. Per-Surface Text Treatment (TEXT-01)
+- [ ] Data Labels card: new Font control (Family/Bold/Italic/Underline, reusing existing Font Size) applies to bar value/data labels in both orientations (in-bar and outside-bar placements); Bold off (default) renders the pre-existing font-weight 600
+- [ ] Axis & Gridlines card: new Axis Label Font control (Family/Bold/Italic/Underline, reusing existing Axis Label Font Size) applies to X/Y tick labels in both orientations; Bold off (default) renders the pre-existing unset/normal weight
+- [ ] Axis titles (showAxisTitles feature) are unchanged (out of this plan's per-surface scope) — still render at hardcoded font-weight 600
+- [ ] Bar fill colour logic (Positive/Negative/Total Color) is unaffected — verified unchanged via resolveBarColor()
+
+## 12. Text-Colour fx (TEXT-02)
+- [ ] fx button appears next to Value Font Color swatch in the format pane (Data Labels card)
+- [ ] Binding a measure to a conditional formatting rule on Value Font Color changes the outside-position bar label colour per category
+- [ ] Total/"Other" bars (no real category binding) fall back to the static Value Font Color swatch (or #333 if left empty)
+- [ ] Positive Colour fx (pre-existing from TRANS-04) continues to work unchanged, distinct from the new label-colour fx
+
+## 13. Render-Nothing Defaults (D-06)
+- [ ] Old saved report with none of the new title/font/alignment properties set renders pixel-identical to pre-upgrade: no title, bar labels at weight 600, axis tick labels at normal weight, all at prior default colours and positions
+
+## 14. Known Pre-Existing Issue (out of scope, logged to deferred-items.md)
+- [ ] `npx pbiviz package` logs a non-fatal `ENOENT: en-US/resources.resjson` error during localization packaging; build still completes successfully. Confirmed pre-existing on the pre-plan baseline (reproduces identically before this plan's changes) — not caused by this plan, not fixed here.

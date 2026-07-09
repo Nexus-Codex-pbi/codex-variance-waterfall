@@ -24,7 +24,7 @@ import DataViewCategorical = powerbi.DataViewCategorical;
 import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
 import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
-import { VisualFormattingSettingsModel } from "./settings";
+import { VisualFormattingSettingsModel, textAlignFor } from "./settings";
 import { formatValue, clamp, contrastText } from "./utils";
 import { toRgba } from "../../_shared/formatting/colorHelpers";
 
@@ -52,6 +52,7 @@ export class Visual implements IVisual {
     private isHighContrast: boolean;
     private svg: Selection<SVGSVGElement>;
     private backgroundRect: Selection<SVGRectElement>;
+    private titleEl: Selection<SVGTextElement>;
     private chartGroup: Selection<SVGGElement>;
     private formattingSettings: VisualFormattingSettingsModel;
     private formattingSettingsService: FormattingSettingsService;
@@ -64,6 +65,8 @@ export class Visual implements IVisual {
     // fx (TRANS-04) state
     private categoricalCategories: powerbi.DataViewCategoryColumn | undefined;
     private positiveColorHelper: ColorHelper | null = null;
+    // fx (TEXT-02) state — bar value/data label colour
+    private valueFontColorHelper: ColorHelper | null = null;
 
     // Margins
     private readonly margin = { top: 24, right: 20, bottom: 60, left: 64 };
@@ -96,6 +99,10 @@ export class Visual implements IVisual {
         // child so it never paints over bars/labels/axes. Never whole-
         // root/target opacity.
         this.backgroundRect = this.svg.append("rect").classed("wf-background", true);
+
+        // Iframe-internal title (Policy 1180.2.5) — persistent SVG text,
+        // shown/hidden per update() via showTitle/titleText (D-14).
+        this.titleEl = this.svg.append("text").classed("wf-title", true);
 
         this.chartGroup = this.svg.append("g").classed("chart-area", true);
 
@@ -147,6 +154,24 @@ export class Visual implements IVisual {
             return this.positiveColorHelper.getColorForMeasure(instanceObjects, "positiveColor");
         }
         return d.type === "positive" ? positiveColor : negativeColor;
+    }
+
+    /**
+     * Resolve a bar's OUTSIDE-position value-label colour, applying the
+     * Value Font Colour fx rule (TEXT-02) per-instance for category-linked
+     * bars via ColorHelper.getColorForMeasure against
+     * categoricalCategories.objects. Total/"Other" bars (categoryIndex -1,
+     * no real selectionId) always fall back to the static format-pane
+     * value (or "#333" if that swatch is left empty — D-06 parity with the
+     * pre-existing "leave empty to use auto colour" behaviour).
+     */
+    private resolveValueFontColor(d: WaterfallBar, customValueColor: string): string {
+        if (d.categoryIndex >= 0 && this.valueFontColorHelper) {
+            const instanceObjects = this.categoricalCategories?.objects?.[d.categoryIndex];
+            const resolved = this.valueFontColorHelper.getColorForMeasure(instanceObjects, "valueFontColor");
+            if (resolved && resolved.length > 0) return resolved;
+        }
+        return customValueColor && customValueColor.length > 0 ? customValueColor : "#333";
     }
 
     /** Find which WaterfallBar the mouse is over by checking SVG rect elements */
@@ -211,6 +236,33 @@ export class Visual implements IVisual {
             const bgHex = background.backgroundColor.value?.value ?? "#ffffff";
             const bgTransparencyPct = background.transparency.value ?? 100;
             this.backgroundRect.attr("fill", toRgba(bgHex, bgTransparencyPct));
+        }
+
+        // ─── Visual Title (iframe-internal, Policy 1180.2.5) ───────────
+        // Reserves vertical space above the chart when shown; `titleH` is
+        // threaded into renderVertical/renderHorizontal's top margin.
+        const titleFmt = this.formattingSettings.titleSettings;
+        const showTitle = !!titleFmt.showTitle.value && !!titleFmt.titleText.value;
+        const titleFontSize = titleFmt.titleFontSize.value || 14;
+        const titleH = showTitle ? titleFontSize + 12 : 0;
+        if (showTitle) {
+            const tAlign = textAlignFor(String((titleFmt as any).titleAlign?.value || "left"));
+            const x = tAlign === "center" ? width / 2 : tAlign === "right" ? width - 8 : 8;
+            const anchor = tAlign === "center" ? "middle" : tAlign === "right" ? "end" : "start";
+            this.titleEl
+                .attr("x", x)
+                .attr("y", titleFontSize + 4)
+                .attr("text-anchor", anchor)
+                .style("font-family", titleFmt.titleFontFamily.value || "Segoe UI, sans-serif")
+                .style("font-size", `${titleFontSize}px`)
+                .style("font-weight", titleFmt.titleBold.value ? "700" : "400")
+                .style("font-style", titleFmt.titleItalic.value ? "italic" : "normal")
+                .style("text-decoration", titleFmt.titleUnderline.value ? "underline" : "none")
+                .style("fill", this.isHighContrast ? this.colorPalette.foreground.value : titleFmt.titleColor.value.value)
+                .text(String(titleFmt.titleText.value))
+                .style("display", null);
+        } else {
+            this.titleEl.style("display", "none");
         }
 
         // Validate data
@@ -279,6 +331,26 @@ export class Visual implements IVisual {
         const showAxisTitles = ax.showAxisTitles.value;
         const xAxisTitle = ax.xAxisTitle.value || "";
         const yAxisTitle = ax.yAxisTitle.value || "";
+
+        // ─── Text treatment (font family/weight/style/decoration,
+        // TEXT-01/TEXT-02) — each `?? default` fallback reproduces this
+        // visual's PRE-EXISTING hardcoded style exactly when an old saved
+        // report has none of these new properties set (D-06):
+        //   bar value/data label: was hardcoded font-weight 600 -> bold defaults true
+        //   axis/category tick label: no font-weight was ever set (normal) -> axisLabelBold defaults false
+        // "Bold" renders 700; "not bold" renders each surface's own
+        // pre-existing rest-weight, not a flat 400.
+        const weightFor = (bold: boolean | undefined, restWeight: string): string => bold ? "700" : restWeight;
+
+        const valueFontFamily = lbl.fontFamily.value || "Segoe UI, Tahoma, Geneva, Verdana, sans-serif";
+        const valueWeight = weightFor(lbl.bold.value, "600");
+        const valueStyle = lbl.italic.value ? "italic" : "normal";
+        const valueDecoration = lbl.underline.value ? "underline" : "none";
+
+        const axisLabelFontFamily = ax.axisLabelFontFamily.value || "Segoe UI, Tahoma, Geneva, Verdana, sans-serif";
+        const axisLabelWeight = weightFor(ax.axisLabelBold.value, "400");
+        const axisLabelStyle = ax.axisLabelItalic.value ? "italic" : "normal";
+        const axisLabelDecoration = ax.axisLabelUnderline.value ? "underline" : "none";
 
         // Build category-variance pairs
         const startValue: number = startValueCol
@@ -395,6 +467,24 @@ export class Visual implements IVisual {
             wf.positiveColor.value.value
         );
 
+        // ─── Conditional formatting (fx) wiring — Bar Value/Data Label
+        // Colour (TEXT-02). Same wildcard-selector + altConstantSelector +
+        // ColorHelper.getColorForMeasure pattern as Positive Colour above,
+        // resolved per-bar against each category's own per-instance object
+        // overrides (categoryIndex -1 for total/"Other" bars falls back to
+        // the static swatch — no real category to bind a rule against).
+        lbl.valueFontColor.selector = dataViewWildcard.createDataViewWildcardSelector(
+            dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
+        );
+        lbl.valueFontColor.altConstantSelector = firstDataBar?.selectionId
+            ? firstDataBar.selectionId.getSelector()
+            : undefined;
+        this.valueFontColorHelper = new ColorHelper(
+            this.host.colorPalette,
+            { objectName: "labelSettings", propertyName: "valueFontColor" },
+            lbl.valueFontColor.value.value
+        );
+
         const orientation = String(wf.orientation.value?.value || "vertical");
 
         if (orientation === "horizontal") {
@@ -404,7 +494,9 @@ export class Visual implements IVisual {
                 showValues, valuePosition, fontSize, displayUnits, decimalPlaces,
                 customValueColor, showAxisLabels, axisLabelColor, axisLabelFontSize,
                 gridlineColor, gridlineWidth, showGridlines, axisLineColor,
-                showAxisTitles, xAxisTitle, yAxisTitle);
+                showAxisTitles, xAxisTitle, yAxisTitle, titleH,
+                valueFontFamily, valueWeight, valueStyle, valueDecoration,
+                axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
         } else {
             this.renderVertical(bars, width, height, barWidthRatio,
                 positiveColor, negativeColor, totalColor,
@@ -412,7 +504,9 @@ export class Visual implements IVisual {
                 showValues, valuePosition, fontSize, displayUnits, decimalPlaces,
                 customValueColor, showAxisLabels, axisLabelColor, axisLabelFontSize,
                 gridlineColor, gridlineWidth, showGridlines, axisLineColor,
-                showAxisTitles, xAxisTitle, yAxisTitle);
+                showAxisTitles, xAxisTitle, yAxisTitle, titleH,
+                valueFontFamily, valueWeight, valueStyle, valueDecoration,
+                axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
         }
 
         this.eventService.renderingFinished(options);
@@ -429,7 +523,9 @@ export class Visual implements IVisual {
         displayUnits: string, decimalPlaces: number,
         customValueColor: string, showAxisLabels: boolean, axisLabelColor: string, axisLabelFontSize: number,
         gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string,
-        showAxisTitles: boolean, xAxisTitle: string, yAxisTitle: string
+        showAxisTitles: boolean, xAxisTitle: string, yAxisTitle: string, titleH: number,
+        valueFontFamily: string, valueWeight: string, valueStyle: string, valueDecoration: string,
+        axisLabelFontFamily: string, axisLabelWeight: string, axisLabelStyle: string, axisLabelDecoration: string
     ): void {
         // In vertical mode: X = categories, Y = values
         const axisTitleFontSize = axisLabelFontSize + 2;
@@ -444,7 +540,7 @@ export class Visual implements IVisual {
             ? axisTitleFontSize + AXIS_TITLE_LEFT_GAP
             : 0;
         const effectiveMargin = {
-            top: this.margin.top,
+            top: this.margin.top + titleH,
             right: this.margin.right,
             bottom: this.margin.bottom + extraBottom,
             left: this.margin.left + extraLeft
@@ -470,8 +566,10 @@ export class Visual implements IVisual {
         const yScale = d3Scale.scaleLinear().domain([yMin, yMax]).range([plotHeight, 0]).nice();
 
         if (showAxisLabels) {
-            this.drawYAxis(yScale, plotHeight, plotWidth, axisLabelColor, axisLabelFontSize, gridlineColor, gridlineWidth, showGridlines, axisLineColor);
-            this.drawXAxis(xScale, plotHeight, bars.length, axisLabelColor, axisLabelFontSize, axisLineColor);
+            this.drawYAxis(yScale, plotHeight, plotWidth, axisLabelColor, axisLabelFontSize, gridlineColor, gridlineWidth, showGridlines, axisLineColor,
+                axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
+            this.drawXAxis(xScale, plotHeight, bars.length, axisLabelColor, axisLabelFontSize, axisLineColor,
+                axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
         }
 
         if (showConnectors) {
@@ -505,7 +603,8 @@ export class Visual implements IVisual {
         if (showValues) {
             this.drawVerticalLabels(barGroup, xScale, yScale,
                 positiveColor, negativeColor, totalColor,
-                valuePosition, fontSize, displayUnits, decimalPlaces, customValueColor);
+                valuePosition, fontSize, displayUnits, decimalPlaces, customValueColor,
+                valueFontFamily, valueWeight, valueStyle, valueDecoration);
 
             // High contrast overrides for value labels
             if (this.isHighContrast) {
@@ -566,7 +665,9 @@ export class Visual implements IVisual {
         displayUnits: string, decimalPlaces: number,
         customValueColor: string, showAxisLabels: boolean, axisLabelColor: string, axisLabelFontSize: number,
         gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string,
-        showAxisTitles: boolean, xAxisTitle: string, yAxisTitle: string
+        showAxisTitles: boolean, xAxisTitle: string, yAxisTitle: string, titleH: number,
+        valueFontFamily: string, valueWeight: string, valueStyle: string, valueDecoration: string,
+        axisLabelFontFamily: string, axisLabelWeight: string, axisLabelStyle: string, axisLabelDecoration: string
     ): void {
         // Horizontal: categories on Y, values on X
         const axisTitleFontSize = axisLabelFontSize + 2;
@@ -579,7 +680,7 @@ export class Visual implements IVisual {
         const extraLeft = (showAxisTitles && yAxisTitle)
             ? axisTitleFontSize + AXIS_TITLE_LEFT_GAP
             : 0;
-        const hMargin = { top: 20, right: 30, bottom: 30 + extraBottom, left: 100 + extraLeft };
+        const hMargin = { top: 20 + titleH, right: 30, bottom: 30 + extraBottom, left: 100 + extraLeft };
         const plotWidth = width - hMargin.left - hMargin.right;
         const plotHeight = height - hMargin.top - hMargin.bottom;
         if (plotWidth <= 0 || plotHeight <= 0) return;
@@ -615,7 +716,10 @@ export class Visual implements IVisual {
                 .append("text").classed("x-tick", true)
                 .attr("x", d => xScale(d)).attr("y", plotHeight + 14)
                 .attr("text-anchor", "middle").attr("font-size", `${axisLabelFontSize}px`)
-                .attr("fill", axisLabelColor).attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+                .attr("fill", axisLabelColor).attr("font-family", axisLabelFontFamily)
+                .style("font-weight", axisLabelWeight)
+                .style("font-style", axisLabelStyle)
+                .style("text-decoration", axisLabelDecoration)
                 .text(d => formatValue(d, "auto", 0));
         }
 
@@ -632,7 +736,10 @@ export class Visual implements IVisual {
                 .attr("x", -8).attr("y", d => (yScale(d) ?? 0) + yScale.bandwidth() / 2)
                 .attr("text-anchor", "end").attr("dominant-baseline", "central")
                 .attr("font-size", `${axisLabelFontSize}px`).attr("fill", axisLabelColor)
-                .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+                .attr("font-family", axisLabelFontFamily)
+                .style("font-weight", axisLabelWeight)
+                .style("font-style", axisLabelStyle)
+                .style("text-decoration", axisLabelDecoration)
                 .text(d => d.length > 14 ? d.substring(0, 12) + "..." : d);
         }
 
@@ -698,8 +805,10 @@ export class Visual implements IVisual {
                 })
                 .attr("dominant-baseline", "central")
                 .attr("font-size", `${fontSize}px`)
-                .attr("font-weight", "600")
-                .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+                .style("font-weight", valueWeight)
+                .style("font-style", valueStyle)
+                .style("text-decoration", valueDecoration)
+                .attr("font-family", valueFontFamily)
                 .attr("fill", d => {
                     const barLeft = xScale(Math.min(d.cumStart, d.cumEnd));
                     const barRight = xScale(Math.max(d.cumStart, d.cumEnd));
@@ -709,7 +818,7 @@ export class Visual implements IVisual {
                         const c = this.resolveBarColor(d, positiveColor, negativeColor, totalColor);
                         return contrastText(c);
                     }
-                    return customValueColor && customValueColor.length > 0 ? customValueColor : "#333";
+                    return this.resolveValueFontColor(d, customValueColor);
                 })
                 .text(d => {
                     const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
@@ -769,7 +878,8 @@ export class Visual implements IVisual {
         yScale: d3Scale.ScaleLinear<number, number>,
         positiveColor: string, negativeColor: string, totalColor: string,
         valuePosition: string, fontSize: number, displayUnits: string, decimalPlaces: number,
-        customValueColor: string
+        customValueColor: string,
+        valueFontFamily: string, valueWeight: string, valueStyle: string, valueDecoration: string
     ): void {
         barGroup.append("text")
             .classed("bar-label", true)
@@ -799,10 +909,12 @@ export class Visual implements IVisual {
                     const c = this.resolveBarColor(d, positiveColor, negativeColor, totalColor);
                     return contrastText(c);
                 }
-                return customValueColor && customValueColor.length > 0 ? customValueColor : "#333";
+                return this.resolveValueFontColor(d, customValueColor);
             })
-            .attr("font-weight", "600")
-            .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+            .style("font-weight", valueWeight)
+            .style("font-style", valueStyle)
+            .style("text-decoration", valueDecoration)
+            .attr("font-family", valueFontFamily)
             .text(d => {
                 const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
                 return prefix + formatValue(d.value, displayUnits, decimalPlaces);
@@ -821,7 +933,8 @@ export class Visual implements IVisual {
     private drawYAxis(
         yScale: d3Scale.ScaleLinear<number, number>, plotHeight: number, plotWidth: number,
         axisLabelColor: string, axisLabelFontSize: number,
-        gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string
+        gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string,
+        axisLabelFontFamily: string, axisLabelWeight: string, axisLabelStyle: string, axisLabelDecoration: string
     ): void {
         const ticks = yScale.ticks(6);
 
@@ -852,7 +965,10 @@ export class Visual implements IVisual {
             .attr("dominant-baseline", "central")
             .attr("font-size", `${axisLabelFontSize}px`)
             .attr("fill", axisLabelColor)
-            .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+            .attr("font-family", axisLabelFontFamily)
+            .style("font-weight", axisLabelWeight)
+            .style("font-style", axisLabelStyle)
+            .style("text-decoration", axisLabelDecoration)
             .text(d => formatValue(d, "auto", 0));
 
         // Axis line
@@ -874,7 +990,8 @@ export class Visual implements IVisual {
     /** Draw X axis with category labels */
     private drawXAxis(
         xScale: d3Scale.ScaleBand<string>, plotHeight: number, barCount: number,
-        axisLabelColor: string, axisLabelFontSize: number, axisLineColor: string
+        axisLabelColor: string, axisLabelFontSize: number, axisLineColor: string,
+        axisLabelFontFamily: string, axisLabelWeight: string, axisLabelStyle: string, axisLabelDecoration: string
     ): void {
         const labels = xScale.domain();
         const rotate = barCount > 6;
@@ -898,7 +1015,10 @@ export class Visual implements IVisual {
             .attr("dominant-baseline", "hanging")
             .attr("font-size", `${axisLabelFontSize}px`)
             .attr("fill", axisLabelColor)
-            .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+            .attr("font-family", axisLabelFontFamily)
+            .style("font-weight", axisLabelWeight)
+            .style("font-style", axisLabelStyle)
+            .style("text-decoration", axisLabelDecoration)
             .attr("transform", d => {
                 if (!rotate) return "";
                 const cx = (xScale(d) ?? 0) + xScale.bandwidth() / 2;
