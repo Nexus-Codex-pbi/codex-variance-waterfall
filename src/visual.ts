@@ -30,6 +30,7 @@ import { toRgba } from "./shared/colorHelpers";
 import { Theme, directionColor, accentToken } from "./shared/bandEngine";
 import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
+import { applyCardSignature } from "./shared/cardSignatureSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph, HighContrastResolved } from "./shared/highContrast";
 
@@ -351,8 +352,10 @@ export class Visual implements IVisual {
 
         // Corner-bracket signature — accent (cyan) tinted per the board;
         // glow only on the dark theme, never under HC.
-        const bracketColor = this.hc.active ? this.hc.color : accentToken(this.theme);
-        this.cornerSignature?.update(bracketColor, {
+        applyCardSignature(this.cornerSignature, this.formattingSettings.cardSignature, {
+            autoHex: accentToken(this.theme),
+            hcActive: this.hc.active,
+            hcColor: this.hc.color,
             glowMix: this.hc.active || this.theme === "light" ? 0 : 50,
             muted: false,
         });
@@ -593,9 +596,7 @@ export class Visual implements IVisual {
         wf.positiveColor.selector = dataViewWildcard.createDataViewWildcardSelector(
             dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
         );
-        wf.positiveColor.altConstantSelector = firstDataBar?.selectionId
-            ? firstDataBar.selectionId.getSelector()
-            : undefined;
+        wf.positiveColor.altConstantSelector = undefined; // card-level constant persistence: swatch edits apply to ALL instances + round-trip into the pane (first-instance binding persisted a row-0-only override); fx rules stay per-instance via the wildcard selector;
         this.positiveColorHelper = new ColorHelper(
             this.host.colorPalette,
             { objectName: "waterfallSettings", propertyName: "positiveColor" },
@@ -614,9 +615,7 @@ export class Visual implements IVisual {
         lbl.valueFontColor.selector = dataViewWildcard.createDataViewWildcardSelector(
             dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
         );
-        lbl.valueFontColor.altConstantSelector = firstDataBar?.selectionId
-            ? firstDataBar.selectionId.getSelector()
-            : undefined;
+        lbl.valueFontColor.altConstantSelector = undefined; // card-level constant persistence: swatch edits apply to ALL instances + round-trip into the pane (first-instance binding persisted a row-0-only override); fx rules stay per-instance via the wildcard selector;
         this.valueFontColorHelper = new ColorHelper(
             this.host.colorPalette,
             { objectName: "labelSettings", propertyName: "valueFontColor" },
@@ -1212,7 +1211,7 @@ export class Visual implements IVisual {
     /** Render empty state message */
     private renderEmpty(width: number, height: number): void {
         // Muted card signature on the landing/empty state (§4).
-        this.cornerSignature?.update("#8f8ab8", { muted: true });
+        applyCardSignature(this.cornerSignature, this.formattingSettings?.cardSignature, { autoHex: "#8f8ab8", muted: true });
         const emptyText = this.localizationManager.getDisplayName("Empty_Title")
             || "Add Category, Start Value, and Variance fields to build the waterfall.";
         const fillColor = this.isHighContrast ? this.colorPalette.foreground.value : "#5e5d5a";
