@@ -27,8 +27,34 @@ import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 import { VisualFormattingSettingsModel, textAlignFor } from "./settings";
 import { formatValue, clamp, contrastText } from "./utils";
 import { toRgba } from "../../_shared/formatting/colorHelpers";
+import { Theme, directionColor, accentToken } from "../../_shared/formatting/bandEngine";
+import { surfaceTokens, TABULAR_NUMS, mix } from "../../_shared/formatting/designTokens";
+import { makeCornerBrackets, CardSignatureHandle } from "../../_shared/formatting/cardSignature";
+import { settle } from "../../_shared/formatting/motion";
+import { applyHighContrast, statusGlyph, HighContrastResolved } from "../../_shared/formatting/highContrast";
 
 type Selection<T extends d3Selection.BaseType> = d3Selection.Selection<T, unknown, null, undefined>;
+
+// ─── v2 board look (01-17): D-16 default sentinels ───────────
+// The v2 defaults ship the redesigned look ONLY while the corresponding
+// property is still at its original shipped default — any user-set value
+// (or fx rule) resolves exactly as before. These are the original
+// shipped defaults, used as "untouched" sentinels.
+const POSITIVE_COLOR_DEFAULT = "#007064";
+const NEGATIVE_COLOR_DEFAULT = "#e60e22";
+const TOTAL_COLOR_DEFAULT = "#130064";
+const CONNECTOR_COLOR_DEFAULT = "#b4b2a9";
+
+/** Luminance-based theme pick — same 0.55 threshold convention as the
+ *  pbiKpiCard v3 pilot: decides whether the resolved background reads as
+ *  a "dark" or "light" surface so the v3 token set stays legible. */
+function themeFor(hex: string): Theme {
+    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})/i.exec(hex || "");
+    if (!m) return "dark";
+    const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.55 ? "light" : "dark";
+}
 
 /** Represents one bar in the waterfall */
 interface WaterfallBar {
@@ -68,6 +94,16 @@ export class Visual implements IVisual {
     // fx (TEXT-02) state — bar value/data label colour
     private valueFontColorHelper: ColorHelper | null = null;
 
+    // ─── v2 board look (01-17) state ───────────────────────────
+    // Theme + HC resolved once per update(); corner-bracket signature
+    // created once (constructor) and re-tinted per render; data signature
+    // gates the settle-once motion (§6 — columns settle ONCE, never loop).
+    private theme: Theme = "dark";
+    private hc: HighContrastResolved = applyHighContrast(null);
+    private cornerSignature: CardSignatureHandle | null = null;
+    private lastDataSignature: string | null = null;
+    private shouldSettle: boolean = false;
+
     // Margins
     private readonly margin = { top: 24, right: 20, bottom: 60, left: 64 };
 
@@ -105,6 +141,17 @@ export class Visual implements IVisual {
         this.titleEl = this.svg.append("text").classed("wf-title", true);
 
         this.chartGroup = this.svg.append("g").classed("chart-area", true);
+
+        // v2 card signature (01-17): corner brackets created once, after
+        // the SVG, so they stay the root's LAST children (paint above the
+        // chart). The root needs a positioning context for the absolutely-
+        // positioned bracket divs. Re-tinted per update().
+        this.target.style.position = "relative";
+        this.cornerSignature = makeCornerBrackets(this.target, "#8f8ab8", {
+            variant: "cornerBracket",
+            mirror: true,
+            muted: true,
+        });
 
         // Tooltip on bar hover
         this.target.addEventListener("mousemove", (e: MouseEvent) => {
@@ -171,7 +218,62 @@ export class Visual implements IVisual {
             const resolved = this.valueFontColorHelper.getColorForMeasure(instanceObjects, "valueFontColor");
             if (resolved && resolved.length > 0) return resolved;
         }
-        return customValueColor && customValueColor.length > 0 ? customValueColor : "#333";
+        if (customValueColor && customValueColor.length > 0) return customValueColor;
+        // v2 (01-17): outside value labels ride the direction law (board
+        // .wvlab) — lime/magenta for drivers, theme text for anchors —
+        // replacing the old flat #333 auto colour. fx rules and a user-set
+        // swatch (above) still win.
+        if (d.type === "positive") return directionColor(1, this.theme);
+        if (d.type === "negative") return directionColor(-1, this.theme);
+        return surfaceTokens(this.theme).text;
+    }
+
+    // ─── v2 board look (01-17) helpers ─────────────────────────
+
+    /** Ensure a <linearGradient> def exists for this base colour; returns
+     *  the fill url. Stop formula mirrors the frozen engine's
+     *  accentBarGradient() (designTokens — light / base at 45% / dark via
+     *  mix()), expressed as SVG stops because a CSS gradient string cannot
+     *  fill an SVG rect. Bevel always runs top-to-bottom (board: 180deg in
+     *  both orientations). */
+    private barFillFor(cache: Map<string, string>, base: string): string {
+        let id = cache.get(base);
+        if (!id) {
+            id = `wf-grad-${base.replace("#", "")}`;
+            let defs = this.chartGroup.select<SVGDefsElement>("defs.wf-grads");
+            if (defs.empty()) {
+                defs = this.chartGroup.append("defs").classed("wf-grads", true);
+            }
+            const grad = defs.append("linearGradient")
+                .attr("id", id)
+                .attr("x1", "0").attr("y1", "0").attr("x2", "0").attr("y2", "1");
+            grad.append("stop").attr("offset", "0%").attr("stop-color", mix(base, "#ffffff", 0.55));
+            grad.append("stop").attr("offset", "40%").attr("stop-color", base);
+            grad.append("stop").attr("offset", "100%").attr("stop-color", mix(base, "#000000", 0.7));
+            cache.set(base, id);
+        }
+        return `url(#${id})`;
+    }
+
+    /** Glow filter for driver/anchor columns — dark theme only, never
+     *  under HC (§8 drops all glow). Empty string = no filter. */
+    private glowFor(base: string): string {
+        return this.hc.active || this.theme === "light"
+            ? ""
+            : `drop-shadow(0 0 9px color-mix(in srgb, ${base} 50%, transparent))`;
+    }
+
+    /** Settle-once motion (§6) on a column — scale-in from its own base,
+     *  gated on the data signature so resizes/format tweaks never replay
+     *  it. Reduced-motion handled inside the shared settle() helper. */
+    private settleColumn(node: SVGElement | null, kind: "scaleX" | "scaleY"): void {
+        if (!this.shouldSettle || !node) return;
+        node.style.setProperty("transform-box", "fill-box");
+        node.style.setProperty("transform-origin", kind === "scaleY" ? "bottom" : "left");
+        settle(node, [
+            { transform: `${kind}(0.5)`, opacity: 0.4 },
+            { transform: `${kind}(1)`, opacity: 1 },
+        ], { duration: 400 });
     }
 
     /** Find which WaterfallBar the mouse is over by checking SVG rect elements */
@@ -229,14 +331,31 @@ export class Visual implements IVisual {
         // while still exposing a real, working Colour + Transparency
         // control.
         this.backgroundRect.attr("width", width).attr("height", height);
+        const background = this.formattingSettings.background;
+        const bgHex = background.backgroundColor.value?.value ?? "#ffffff";
         if (this.isHighContrast) {
             this.backgroundRect.attr("fill", "none");
         } else {
-            const background = this.formattingSettings.background;
-            const bgHex = background.backgroundColor.value?.value ?? "#ffffff";
             const bgTransparencyPct = background.transparency.value ?? 100;
             this.backgroundRect.attr("fill", toRgba(bgHex, bgTransparencyPct));
         }
+
+        // ─── v2 board look (01-17): theme + the single HC rule ─────────
+        // Theme keys off the resolved background hex (pbiKpiCard pilot
+        // convention); HC resolution routed through the ONE shared fallback
+        // rule instead of a per-visual reinvention.
+        this.theme = themeFor(bgHex);
+        this.hc = applyHighContrast(this.colorPalette, {
+            fallbackColor: this.formattingSettings.waterfallCard.positiveColor.value.value,
+        });
+
+        // Corner-bracket signature — accent (cyan) tinted per the board;
+        // glow only on the dark theme, never under HC.
+        const bracketColor = this.hc.active ? this.hc.color : accentToken(this.theme);
+        this.cornerSignature?.update(bracketColor, {
+            glowMix: this.hc.active || this.theme === "light" ? 0 : 50,
+            muted: false,
+        });
 
         // ─── Visual Title (iframe-internal, Policy 1180.2.5) ───────────
         // Reserves vertical space above the chart when shown; `titleH` is
@@ -299,11 +418,27 @@ export class Visual implements IVisual {
         const sort = this.formattingSettings.sortCard;
         const lbl = this.formattingSettings.labelCard;
 
-        const positiveColor = wf.positiveColor.value.value;
-        const negativeColor = wf.negativeColor.value.value;
-        const totalColor = wf.totalColor.value.value;
+        // ─── v2 board look (01-17): the direction law + cyan anchors ───
+        // D-16 ladder per colour: a user-set swatch resolves exactly as
+        // before; only the untouched shipped default hands over to the
+        // shared engine — increases locked to lime, decreases to magenta
+        // (directionColor, §2 — reserved for direction only), anchors/
+        // subtotals in cyan (accentToken — never a driver colour).
+        const positiveColor = wf.positiveColor.value.value !== POSITIVE_COLOR_DEFAULT
+            ? wf.positiveColor.value.value
+            : directionColor(1, this.theme);
+        const negativeColor = wf.negativeColor.value.value !== NEGATIVE_COLOR_DEFAULT
+            ? wf.negativeColor.value.value
+            : directionColor(-1, this.theme);
+        const totalColor = wf.totalColor.value.value !== TOTAL_COLOR_DEFAULT
+            ? wf.totalColor.value.value
+            : accentToken(this.theme);
         const showConnectors = wf.connectorLine.value;
-        const connectorColor = wf.connectorColor.value.value;
+        // Connectors: 1.5px hairlines in the muted foreground (board) —
+        // a user-set Connector Color still resolves.
+        const connectorColor = wf.connectorColor.value.value !== CONNECTOR_COLOR_DEFAULT
+            ? wf.connectorColor.value.value
+            : surfaceTokens(this.theme).muted;
         const showEndTotal = wf.showEndTotal.value;
         const startLabel = wf.startLabel.value || "Forecast";
         const endLabel = wf.endLabel.value || "Actual";
@@ -464,7 +599,10 @@ export class Visual implements IVisual {
         this.positiveColorHelper = new ColorHelper(
             this.host.colorPalette,
             { objectName: "waterfallSettings", propertyName: "positiveColor" },
-            wf.positiveColor.value.value
+            // v2 (01-17): the helper's no-override fallback is the
+            // D-16-resolved positive colour (lime when the swatch is at its
+            // shipped default), so the fx ladder stays: rule > swatch > law.
+            positiveColor
         );
 
         // ─── Conditional formatting (fx) wiring — Bar Value/Data Label
@@ -484,6 +622,12 @@ export class Visual implements IVisual {
             { objectName: "labelSettings", propertyName: "valueFontColor" },
             lbl.valueFontColor.value.value
         );
+
+        // v2 motion gate (§6): columns settle ONCE per data change — a
+        // resize/format-pane update re-renders without replaying it.
+        const dataSignature = bars.map((b) => `${b.label}:${b.value}`).join("|");
+        this.shouldSettle = dataSignature !== this.lastDataSignature;
+        this.lastDataSignature = dataSignature;
 
         const orientation = String(wf.orientation.value?.value || "vertical");
 
@@ -572,6 +716,8 @@ export class Visual implements IVisual {
                 axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
         }
 
+        // v2 (01-17): connectors are solid 1.5px hairlines at 55% opacity
+        // (board .wconn) — the running level carried between columns.
         if (showConnectors) {
             for (let i = 0; i < bars.length - 1; i++) {
                 const cur = bars[i], nxt = bars[i + 1];
@@ -579,19 +725,27 @@ export class Visual implements IVisual {
                 this.chartGroup.append("line").classed("connector", true)
                     .attr("x1", (xScale(cur.label) ?? 0) + xScale.bandwidth())
                     .attr("y1", cy).attr("x2", xScale(nxt.label) ?? 0).attr("y2", cy)
-                    .attr("stroke", connectorColor).attr("stroke-width", 1).attr("stroke-dasharray", "4,3");
+                    .attr("stroke", connectorColor).attr("stroke-width", 1.5).attr("opacity", 0.55);
             }
         }
 
         const barGroup = this.chartGroup.selectAll(".wf-bar").data(bars).enter().append("g").classed("wf-bar", true);
 
+        // v2 (01-17): columns render the beveled 3-stop gradient (mirrors
+        // accentBarGradient) over the direction-law colour, glow on dark,
+        // and settle once bottom-up (§6).
+        const gradCache = new Map<string, string>();
         barGroup.append("rect")
             .attr("x", d => xScale(d.label) ?? 0)
             .attr("y", d => yScale(Math.max(d.cumStart, d.cumEnd)))
             .attr("width", xScale.bandwidth())
             .attr("height", d => Math.abs(yScale(d.cumStart) - yScale(d.cumEnd)))
-            .attr("fill", d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor))
-            .attr("rx", 2).attr("ry", 2);
+            .attr("fill", d => this.isHighContrast
+                ? this.colorPalette.foreground.value
+                : this.barFillFor(gradCache, this.resolveBarColor(d, positiveColor, negativeColor, totalColor)))
+            .attr("rx", 3).attr("ry", 3)
+            .style("filter", d => this.glowFor(this.resolveBarColor(d, positiveColor, negativeColor, totalColor)) || null)
+            .each((d, i, nodes) => this.settleColumn(nodes[i] as SVGElement, "scaleY"));
 
         // High contrast overrides for vertical bars and connectors
         if (this.isHighContrast) {
@@ -748,7 +902,8 @@ export class Visual implements IVisual {
             .attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", plotHeight)
             .attr("stroke", axisLineColor).attr("stroke-width", 1);
 
-        // Connector lines (horizontal: vertical connectors between bars)
+        // Connector lines (horizontal: vertical connectors between bars) —
+        // v2 (01-17): solid 1.5px hairlines at 55% opacity (board .wconn).
         if (showConnectors) {
             for (let i = 0; i < bars.length - 1; i++) {
                 const cur = bars[i], nxt = bars[i + 1];
@@ -756,20 +911,26 @@ export class Visual implements IVisual {
                 this.chartGroup.append("line").classed("connector", true)
                     .attr("x1", cx).attr("y1", (yScale(cur.label) ?? 0) + yScale.bandwidth())
                     .attr("x2", cx).attr("y2", yScale(nxt.label) ?? 0)
-                    .attr("stroke", connectorColor).attr("stroke-width", 1).attr("stroke-dasharray", "4,3");
+                    .attr("stroke", connectorColor).attr("stroke-width", 1.5).attr("opacity", 0.55);
             }
         }
 
-        // Bars (horizontal)
+        // Bars (horizontal) — v2 (01-17): beveled direction-law gradient +
+        // glow on dark + settle once (see renderVertical note).
         const barGroup = this.chartGroup.selectAll(".wf-bar").data(bars).enter().append("g").classed("wf-bar", true);
 
+        const gradCache = new Map<string, string>();
         barGroup.append("rect")
             .attr("x", d => xScale(Math.min(d.cumStart, d.cumEnd)))
             .attr("y", d => yScale(d.label) ?? 0)
             .attr("width", d => Math.abs(xScale(d.cumEnd) - xScale(d.cumStart)))
             .attr("height", yScale.bandwidth())
-            .attr("fill", d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor))
-            .attr("rx", 2).attr("ry", 2);
+            .attr("fill", d => this.isHighContrast
+                ? this.colorPalette.foreground.value
+                : this.barFillFor(gradCache, this.resolveBarColor(d, positiveColor, negativeColor, totalColor)))
+            .attr("rx", 3).attr("ry", 3)
+            .style("filter", d => this.glowFor(this.resolveBarColor(d, positiveColor, negativeColor, totalColor)) || null)
+            .each((d, i, nodes) => this.settleColumn(nodes[i] as SVGElement, "scaleX"));
 
         // High contrast overrides for horizontal bars, connectors, axes, gridlines, and labels
         if (this.isHighContrast) {
@@ -808,6 +969,8 @@ export class Visual implements IVisual {
                 .style("font-weight", valueWeight)
                 .style("font-style", valueStyle)
                 .style("text-decoration", valueDecoration)
+                // v2 (01-17): value labels in tabular numerals (board .wvlab).
+                .style("font-feature-settings", TABULAR_NUMS)
                 .attr("font-family", valueFontFamily)
                 .attr("fill", d => {
                     const barLeft = xScale(Math.min(d.cumStart, d.cumEnd));
@@ -821,8 +984,13 @@ export class Visual implements IVisual {
                     return this.resolveValueFontColor(d, customValueColor);
                 })
                 .text(d => {
+                    // v2 HC (§8): a direction reading is never colour-only —
+                    // the up/down glyph rides along under high contrast.
+                    const glyph = this.hc.active && d.type !== "total"
+                        ? statusGlyph(d.type === "positive" ? "up" : "down") + " "
+                        : "";
                     const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
-                    return prefix + formatValue(d.value, displayUnits, decimalPlaces);
+                    return glyph + prefix + formatValue(d.value, displayUnits, decimalPlaces);
                 });
 
             // High contrast overrides for horizontal value labels
@@ -914,10 +1082,17 @@ export class Visual implements IVisual {
             .style("font-weight", valueWeight)
             .style("font-style", valueStyle)
             .style("text-decoration", valueDecoration)
+            // v2 (01-17): value labels in tabular numerals (board .wvlab).
+            .style("font-feature-settings", TABULAR_NUMS)
             .attr("font-family", valueFontFamily)
             .text(d => {
+                // v2 HC (§8): a direction reading is never colour-only —
+                // the up/down glyph rides along under high contrast.
+                const glyph = this.hc.active && d.type !== "total"
+                    ? statusGlyph(d.type === "positive" ? "up" : "down") + " "
+                    : "";
                 const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
-                return prefix + formatValue(d.value, displayUnits, decimalPlaces);
+                return glyph + prefix + formatValue(d.value, displayUnits, decimalPlaces);
             });
     }
 
@@ -1036,6 +1211,8 @@ export class Visual implements IVisual {
 
     /** Render empty state message */
     private renderEmpty(width: number, height: number): void {
+        // Muted card signature on the landing/empty state (§4).
+        this.cornerSignature?.update("#8f8ab8", { muted: true });
         const emptyText = this.localizationManager.getDisplayName("Empty_Title")
             || "Add Category, Start Value, and Variance fields to build the waterfall.";
         const fillColor = this.isHighContrast ? this.colorPalette.foreground.value : "#5e5d5a";
@@ -1053,6 +1230,8 @@ export class Visual implements IVisual {
     }
 
     public destroy(): void {
+        this.cornerSignature?.destroy();
+        this.cornerSignature = null;
         this.chartGroup.selectAll("*").remove();
     }
 

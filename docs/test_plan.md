@@ -78,3 +78,17 @@
 
 ## 14. Known Pre-Existing Issue (out of scope, logged to deferred-items.md)
 - [ ] `npx pbiviz package` logs a non-fatal `ENOENT: en-US/resources.resjson` error during localization packaging; build still completes successfully. Confirmed pre-existing on the pre-plan baseline (reproduces identically before this plan's changes) — not caused by this plan, not fixed here.
+## 15. v2 Board Look — Direction Law + Cyan Anchors (LOOK-03, Phase 1 Plan 17)
+- [ ] With colour swatches at their shipped defaults: increase columns render the lime direction token, decrease columns the magenta token (shared directionColor law), and start/end/subtotal anchor columns the cyan accent token — never a driver colour — in BOTH orientations
+- [ ] Columns render the beveled 3-stop gradient (light/base/dark, mirrors accentBarGradient) at radius 3 with a soft glow on dark backgrounds; glow absent on light backgrounds and under high contrast
+- [ ] D-16: a user-set Positive/Negative/Total Color swatch renders exactly that colour (gradient/glow treatment still applies); a Positive Color fx rule overrides per category row (rule > swatch > law)
+
+## 16. v2 Board Look — Hairline Connectors + tnum Labels (Phase 1 Plan 17)
+- [ ] Connectors render as solid 1.5px hairlines at 55% opacity in the muted foreground (replacing the old 1px dashed line), carrying the running level between columns, in both orientations; the Connector Lines toggle still hides them; a user-set Connector Color still resolves
+- [ ] Value labels render in tabular numerals; OUTSIDE-position labels ride the direction law (lime for +, magenta for −, theme text for anchors) when no fx rule/custom colour is set; fx and a user-set Value Font Color still win; INSIDE-position labels keep the contrast-computed ink
+- [ ] Axis tick labels, category labels, axis lines, gridlines, and BOTH axis titles (incl. the v1.0.0.2 axis-title placement fix) render unchanged in both orientations
+
+## 17. v2 Board Look — Signature, Motion, HC (Phase 1 Plan 17)
+- [ ] Corner-bracket card signature renders at top-left/bottom-right, accent (cyan) tinted, glowing on dark only; muted grey on the empty/landing state
+- [ ] Columns settle once (≤400ms ease-out, scale from their own base) when the data changes; resizes and format-pane tweaks do NOT replay it; `prefers-reduced-motion` skips it entirely
+- [ ] High contrast: columns/connectors map to system slots, all glow drops, and each driver value label carries an up/down glyph prefix (▲/▼) so direction never reads by colour alone
