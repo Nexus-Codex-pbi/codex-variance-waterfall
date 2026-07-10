@@ -26,12 +26,12 @@ import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
 import { VisualFormattingSettingsModel, textAlignFor } from "./settings";
 import { formatValue, clamp, contrastText } from "./utils";
-import { toRgba } from "../../_shared/formatting/colorHelpers";
-import { Theme, directionColor, accentToken } from "../../_shared/formatting/bandEngine";
-import { surfaceTokens, TABULAR_NUMS, mix } from "../../_shared/formatting/designTokens";
-import { makeCornerBrackets, CardSignatureHandle } from "../../_shared/formatting/cardSignature";
-import { settle } from "../../_shared/formatting/motion";
-import { applyHighContrast, statusGlyph, HighContrastResolved } from "../../_shared/formatting/highContrast";
+import { toRgba } from "./shared/colorHelpers";
+import { Theme, directionColor, accentToken } from "./shared/bandEngine";
+import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
+import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
+import { settle } from "./shared/motion";
+import { applyHighContrast, statusGlyph, HighContrastResolved } from "./shared/highContrast";
 
 type Selection<T extends d3Selection.BaseType> = d3Selection.Selection<T, unknown, null, undefined>;
 

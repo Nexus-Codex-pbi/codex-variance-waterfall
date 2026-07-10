@@ -8,9 +8,9 @@ import FormattingSettingsCard = formattingSettings.SimpleCard;
 import FormattingSettingsSlice = formattingSettings.Slice;
 import FormattingSettingsModel = formattingSettings.Model;
 
-import { BackgroundSettings } from "../../_shared/formatting/backgroundSettings";
-import { TitleSettings } from "../../_shared/formatting/titleSettings";
-import { alignSlice, alignSelfFor, textAlignFor } from "../../_shared/formatting/textFormatting";
+import { BackgroundSettings } from "./shared/backgroundSettings";
+import { TitleSettings } from "./shared/titleSettings";
+import { alignSlice, alignSelfFor, textAlignFor } from "./shared/textFormatting";
 
 const ConstantOrRule = powerbi.VisualEnumerationInstanceKinds.ConstantOrRule;
 
