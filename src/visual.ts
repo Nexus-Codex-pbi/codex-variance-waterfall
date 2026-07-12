@@ -371,6 +371,11 @@ export class Visual implements IVisual {
             const tAlign = textAlignFor(String((titleFmt as any).titleAlign?.value || "left"));
             const x = tAlign === "center" ? width / 2 : tAlign === "right" ? width - 8 : 8;
             const anchor = tAlign === "center" ? "middle" : tAlign === "right" ? "end" : "start";
+            // Adaptive default (D-16 sentinel): untouched shared-Title navy
+            // swaps to the dark text token on dark surfaces.
+            const setTitle = titleFmt.titleColor.value.value;
+            const adaptiveTitle = setTitle === "#1a1a2e" && this.theme === "dark"
+                ? surfaceTokens("dark").text : setTitle;
             this.titleEl
                 .attr("x", x)
                 .attr("y", titleFontSize + 4)
@@ -380,7 +385,7 @@ export class Visual implements IVisual {
                 .style("font-weight", titleFmt.titleBold.value ? "700" : "400")
                 .style("font-style", titleFmt.titleItalic.value ? "italic" : "normal")
                 .style("text-decoration", titleFmt.titleUnderline.value ? "underline" : "none")
-                .style("fill", this.isHighContrast ? this.colorPalette.foreground.value : titleFmt.titleColor.value.value)
+                .style("fill", this.isHighContrast ? this.colorPalette.foreground.value : adaptiveTitle)
                 .text(String(titleFmt.titleText.value))
                 .style("display", null);
         } else {
