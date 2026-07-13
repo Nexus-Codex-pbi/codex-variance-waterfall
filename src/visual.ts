@@ -29,6 +29,7 @@ import { formatValue, clamp, contrastText } from "./utils";
 import { toRgba } from "./shared/colorHelpers";
 import { Theme, directionColor, accentToken } from "./shared/bandEngine";
 import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
+import { resolveBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
 import { applyCardSignature } from "./shared/cardSignatureSettings";
 import { settle } from "./shared/motion";
@@ -79,6 +80,7 @@ export class Visual implements IVisual {
     private isHighContrast: boolean;
     private svg: Selection<SVGSVGElement>;
     private backgroundRect: Selection<SVGRectElement>;
+    private borderRect: Selection<SVGRectElement>;
     private titleEl: Selection<SVGTextElement>;
     private chartGroup: Selection<SVGGElement>;
     private formattingSettings: VisualFormattingSettingsModel;
@@ -141,6 +143,7 @@ export class Visual implements IVisual {
         // shown/hidden per update() via showTitle/titleText (D-14).
         this.titleEl = this.svg.append("text").classed("wf-title", true);
 
+        this.borderRect = this.svg.append("rect").classed("wf-border", true).attr("fill", "none").style("pointer-events", "none");
         this.chartGroup = this.svg.append("g").classed("chart-area", true);
 
         // v2 card signature (01-17): corner brackets created once, after
@@ -341,11 +344,41 @@ export class Visual implements IVisual {
             this.backgroundRect.attr("fill", toRgba(bgHex, bgTransparencyPct));
         }
 
+        // Visual's own Border card — SVG stroke-rect inset by half the
+        // stroke so it sits fully inside the canvas; raised above content.
+        const rb = resolveBorder(this.formattingSettings.visualBorder, {
+            hcActive: this.isHighContrast,
+            hcColor: this.colorPalette.foreground.value,
+            palette: this.colorPalette,
+            metadataObjects: options.dataViews?.[0]?.metadata?.objects,
+        });
+        this.svg.node()?.appendChild(this.borderRect.node() as Node); // keep on top
+        if (rb) {
+            const inset = rb.width / 2;
+            this.borderRect
+                .attr("x", inset).attr("y", inset)
+                .attr("width", Math.max(0, width - rb.width))
+                .attr("height", Math.max(0, height - rb.width))
+                .attr("rx", rb.radius).attr("ry", rb.radius)
+                .attr("stroke", rb.colorCss).attr("stroke-width", rb.width)
+                .style("display", "");
+        } else {
+            this.borderRect.style("display", "none");
+        }
+
         // ─── v2 board look (01-17): theme + the single HC rule ─────────
         // Theme keys off the resolved background hex (pbiKpiCard pilot
         // convention); HC resolution routed through the ONE shared fallback
         // rule instead of a per-visual reinvention.
-        this.theme = themeFor(bgHex);
+        // Theme-source ladder (suite standard): visible own bg governs;
+        // user-set hex governs even at full transparency; else the report
+        // theme palette background (was: assume the bgHex, which defaulted
+        // white → light theme even on dark report pages).
+        const bgTransparencyForTheme = this.formattingSettings.background.transparency.value ?? 100;
+        const bgHexIsUserSet = bgHex.toLowerCase() !== "#ffffff";
+        const paletteBg = (this.colorPalette && (this.colorPalette as any).background && (this.colorPalette as any).background.value) || "#ffffff";
+        const themeSourceHex = (bgTransparencyForTheme < 100 || bgHexIsUserSet) ? bgHex : paletteBg;
+        this.theme = themeFor(themeSourceHex);
         this.hc = applyHighContrast(this.colorPalette, {
             fallbackColor: this.formattingSettings.waterfallCard.positiveColor.value.value,
         });
@@ -465,12 +498,21 @@ export class Visual implements IVisual {
         // Axis & gridline settings
         const ax = this.formattingSettings.axisCard;
         const showAxisLabels = ax.showAxisLabels.value;
-        const axisLabelColor = ax.axisLabelColor.value.value;
+        // Adaptive defaults (D-16): the three static light-grey axis
+        // defaults would vanish on a dark surface — swap to dark tokens
+        // while untouched; any user pick wins.
+        const setAxisLabel = ax.axisLabelColor.value.value;
+        const axisLabelColor = setAxisLabel === "#5e5d5a" && this.theme === "dark"
+            ? surfaceTokens("dark").muted : setAxisLabel;
         const axisLabelFontSize = clamp(ax.axisLabelFontSize.value || 10, 6, 30);
-        const gridlineColor = ax.gridlineColor.value.value;
+        const setGridline = ax.gridlineColor.value.value;
+        const gridlineColor = setGridline === "#e8e2d3" && this.theme === "dark"
+            ? surfaceTokens("dark").border : setGridline;
         const gridlineWidth = Math.max(0.1, ax.gridlineWidth.value);
         const showGridlines = ax.showGridlines.value;
-        const axisLineColor = ax.axisLineColor.value.value;
+        const setAxisLine = ax.axisLineColor.value.value;
+        const axisLineColor = setAxisLine === "#b4b2a9" && this.theme === "dark"
+            ? surfaceTokens("dark").muted : setAxisLine;
         const showAxisTitles = ax.showAxisTitles.value;
         const xAxisTitle = ax.xAxisTitle.value || "";
         const yAxisTitle = ax.yAxisTitle.value || "";
