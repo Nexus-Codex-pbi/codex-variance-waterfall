@@ -14,7 +14,6 @@
 
 import powerbi from "powerbi-visuals-api";
 import { formattingSettings } from "powerbi-visuals-utils-formattingmodel";
-import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
 import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 import { toRgba } from "./colorHelpers";
 
@@ -84,9 +83,12 @@ export function resolveBorder(
     opts: { hcActive?: boolean; hcColor?: string; palette?: unknown; metadataObjects?: unknown } = {}
 ): ResolvedBorder | null {
     if (!border || !border.show.value) return null;
-    border.color.selector = dataViewWildcard.createDataViewWildcardSelector(
-        dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
-    );
+    // The border is a WHOLE-VISUAL (card-level) property, not per-datapoint.
+    // A dataViewWildcard selector reroutes where the constant swatch
+    // persists, so edits never reached the render (Neil 2026-07-13: "border
+    // will not change colour"). No selector: the constant persists at card
+    // level via border.color.value.value; a conditional-formatting RULE
+    // still resolves through metadata.objects (the ColorHelper overlay).
     border.color.altConstantSelector = undefined;
     let hex = border.color.value.value;
     if (opts.palette && opts.metadataObjects !== undefined) {
@@ -95,6 +97,9 @@ export function resolveBorder(
             { objectName: "visualBorder", propertyName: "color" },
             hex
         );
+        // Only a persisted RULE fill overrides the constant; when absent,
+        // getColorForMeasure returns the constant we seeded, so this is a
+        // safe no-op for the plain-constant case.
         hex = helper.getColorForMeasure(opts.metadataObjects as never, "color") ?? hex;
     }
     const width = Math.max(1, Math.min(8, border.width.value));
