@@ -542,7 +542,7 @@ export class Visual implements IVisual {
         const axisLabelFontSize = clamp(ax.axisLabelFontSize.value || 10, 6, 30);
         const setGridline = ax.gridlineColor.value.value;
         const gridlineColor = setGridline === "#e8e2d3" && this.theme === "dark"
-            ? surfaceTokens("dark").border : setGridline;
+            ? "rgba(143,138,184,0.28)" : setGridline;
         const gridlineWidth = Math.max(0.1, ax.gridlineWidth.value);
         const showGridlines = ax.showGridlines.value;
         const setAxisLine = ax.axisLineColor.value.value;
@@ -759,7 +759,7 @@ export class Visual implements IVisual {
         const AXIS_TITLE_BOTTOM_PAD = 8;
         const AXIS_TITLE_LEFT_GAP = 10;
         const extraBottom = (showAxisTitles && xAxisTitle)
-            ? axisTitleFontSize + AXIS_TITLE_TICK_GAP + AXIS_TITLE_BOTTOM_PAD
+            ? (bars.length > 6 ? axisLabelFontSize * 5 : 0) + axisTitleFontSize + AXIS_TITLE_TICK_GAP + AXIS_TITLE_BOTTOM_PAD
             : 0;
         const extraLeft = (showAxisTitles && yAxisTitle)
             ? axisTitleFontSize + AXIS_TITLE_LEFT_GAP
@@ -868,9 +868,13 @@ export class Visual implements IVisual {
         if (showAxisTitles) {
             const titleColor = this.isHighContrast ? this.colorPalette.foreground.value : axisLabelColor;
             if (xAxisTitle) {
-                // Position title baseline AXIS_TITLE_BOTTOM_PAD above canvas bottom edge,
-                // with AXIS_TITLE_TICK_GAP between tick row and title.
-                const titleY = plotHeight + axisLabelFontSize + AXIS_TITLE_TICK_GAP + axisTitleFontSize;
+                // Clear the category labels: when rotated (barCount>6) they
+                // extend well below plotHeight, so the title must sit below
+                // that extent, not just below the tick row (Neil 2026-07-13:
+                // "Axis" title overlapped FX Headwind).
+                const rotatedLabels = bars.length > 6;
+                const labelAllowance = rotatedLabels ? axisLabelFontSize * 5 : axisLabelFontSize + 4;
+                const titleY = plotHeight + labelAllowance + AXIS_TITLE_TICK_GAP + axisTitleFontSize;
                 this.chartGroup.append("text")
                     .classed("axis-title x-axis-title", true)
                     .attr("x", plotWidth / 2)
@@ -920,7 +924,7 @@ export class Visual implements IVisual {
         const AXIS_TITLE_BOTTOM_PAD = 8;
         const AXIS_TITLE_LEFT_GAP = 10;
         const extraBottom = (showAxisTitles && xAxisTitle)
-            ? axisTitleFontSize + AXIS_TITLE_TICK_GAP + AXIS_TITLE_BOTTOM_PAD
+            ? (bars.length > 6 ? axisLabelFontSize * 5 : 0) + axisTitleFontSize + AXIS_TITLE_TICK_GAP + AXIS_TITLE_BOTTOM_PAD
             : 0;
         const extraLeft = (showAxisTitles && yAxisTitle)
             ? axisTitleFontSize + AXIS_TITLE_LEFT_GAP
