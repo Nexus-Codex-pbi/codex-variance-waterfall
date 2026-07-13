@@ -259,6 +259,41 @@ export class Visual implements IVisual {
         return `url(#${id})`;
     }
 
+    /** Draw a column as stacked LED-block segments (v2 signature texture).
+     *  orientation "v": blocks stack vertically within [y,y+h]; "h": blocks
+     *  run horizontally within [x,x+w]. All blocks carry the column colour
+     *  (a waterfall column IS one magnitude — every block lit). */
+    private drawQuantisedColumn(
+        group: d3Selection.Selection<SVGGElement, WaterfallBar, d3Selection.BaseType, unknown>,
+        orientation: "v" | "h",
+        x: (d: WaterfallBar) => number, y: (d: WaterfallBar) => number,
+        w: (d: WaterfallBar) => number, h: (d: WaterfallBar) => number,
+        color: (d: WaterfallBar) => string
+    ): void {
+        const SEG = 9, GAP = 3;
+        group.each((d, i, nodes) => {
+            const g = d3Selection.select(nodes[i] as SVGGElement);
+            const bx = x(d), by = y(d), bw = w(d), bh = h(d);
+            const col = this.isHighContrast ? this.colorPalette.foreground.value : color(d);
+            const span = orientation === "v" ? bh : bw;
+            const n = Math.max(1, Math.floor((span + GAP) / (SEG + GAP)));
+            const segLen = Math.max(2, (span - (n - 1) * GAP) / n);
+            const glow = this.glowFor(col) || null;
+            for (let k = 0; k < n; k++) {
+                const off = k * (segLen + GAP);
+                const rect = g.append("rect").attr("class", "wf-led")
+                    .attr("fill", col).attr("rx", 2).attr("ry", 2);
+                if (orientation === "v") {
+                    rect.attr("x", bx).attr("y", by + off).attr("width", bw).attr("height", segLen);
+                } else {
+                    rect.attr("x", bx + off).attr("y", by).attr("width", segLen).attr("height", bh);
+                }
+                if (glow) rect.style("filter", glow);
+            }
+            this.settleColumn(g.node() as SVGElement, orientation === "v" ? "scaleY" : "scaleX");
+        });
+    }
+
     /** Glow filter for driver/anchor columns — dark theme only, never
      *  under HC (§8 drops all glow). Empty string = no filter. */
     private glowFor(base: string): string {
@@ -781,22 +816,32 @@ export class Visual implements IVisual {
         // accentBarGradient) over the direction-law colour, glow on dark,
         // and settle once bottom-up (§6).
         const gradCache = new Map<string, string>();
-        barGroup.append("rect")
-            .attr("x", d => xScale(d.label) ?? 0)
-            .attr("y", d => yScale(Math.max(d.cumStart, d.cumEnd)))
-            .attr("width", xScale.bandwidth())
-            .attr("height", d => Math.abs(yScale(d.cumStart) - yScale(d.cumEnd)))
-            .attr("fill", d => this.isHighContrast
-                ? this.colorPalette.foreground.value
-                : this.barFillFor(gradCache, this.resolveBarColor(d, positiveColor, negativeColor, totalColor)))
-            .attr("rx", 3).attr("ry", 3)
-            .style("filter", d => this.glowFor(this.resolveBarColor(d, positiveColor, negativeColor, totalColor)) || null)
-            .each((d, i, nodes) => this.settleColumn(nodes[i] as SVGElement, "scaleY"));
+        const quantised = this.formattingSettings.waterfallCard.quantisedMode.value;
+        if (quantised) {
+            this.drawQuantisedColumn(barGroup, "v",
+                d => xScale(d.label) ?? 0,
+                d => yScale(Math.max(d.cumStart, d.cumEnd)),
+                () => xScale.bandwidth(),
+                d => Math.abs(yScale(d.cumStart) - yScale(d.cumEnd)),
+                d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor));
+        } else {
+            barGroup.append("rect")
+                .attr("x", d => xScale(d.label) ?? 0)
+                .attr("y", d => yScale(Math.max(d.cumStart, d.cumEnd)))
+                .attr("width", xScale.bandwidth())
+                .attr("height", d => Math.abs(yScale(d.cumStart) - yScale(d.cumEnd)))
+                .attr("fill", d => this.isHighContrast
+                    ? this.colorPalette.foreground.value
+                    : this.barFillFor(gradCache, this.resolveBarColor(d, positiveColor, negativeColor, totalColor)))
+                .attr("rx", 3).attr("ry", 3)
+                .style("filter", d => this.glowFor(this.resolveBarColor(d, positiveColor, negativeColor, totalColor)) || null)
+                .each((d, i, nodes) => this.settleColumn(nodes[i] as SVGElement, "scaleY"));
+        }
 
         // High contrast overrides for vertical bars and connectors
         if (this.isHighContrast) {
             const hcFg = this.colorPalette.foreground.value;
-            barGroup.select("rect").attr("fill", hcFg);
+            barGroup.selectAll("rect").attr("fill", hcFg);
             this.chartGroup.selectAll(".connector").attr("stroke", hcFg);
         }
 
@@ -966,22 +1011,32 @@ export class Visual implements IVisual {
         const barGroup = this.chartGroup.selectAll(".wf-bar").data(bars).enter().append("g").classed("wf-bar", true);
 
         const gradCache = new Map<string, string>();
-        barGroup.append("rect")
-            .attr("x", d => xScale(Math.min(d.cumStart, d.cumEnd)))
-            .attr("y", d => yScale(d.label) ?? 0)
-            .attr("width", d => Math.abs(xScale(d.cumEnd) - xScale(d.cumStart)))
-            .attr("height", yScale.bandwidth())
-            .attr("fill", d => this.isHighContrast
-                ? this.colorPalette.foreground.value
-                : this.barFillFor(gradCache, this.resolveBarColor(d, positiveColor, negativeColor, totalColor)))
-            .attr("rx", 3).attr("ry", 3)
-            .style("filter", d => this.glowFor(this.resolveBarColor(d, positiveColor, negativeColor, totalColor)) || null)
-            .each((d, i, nodes) => this.settleColumn(nodes[i] as SVGElement, "scaleX"));
+        const quantisedH = this.formattingSettings.waterfallCard.quantisedMode.value;
+        if (quantisedH) {
+            this.drawQuantisedColumn(barGroup, "h",
+                d => xScale(Math.min(d.cumStart, d.cumEnd)),
+                d => yScale(d.label) ?? 0,
+                d => Math.abs(xScale(d.cumEnd) - xScale(d.cumStart)),
+                () => yScale.bandwidth(),
+                d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor));
+        } else {
+            barGroup.append("rect")
+                .attr("x", d => xScale(Math.min(d.cumStart, d.cumEnd)))
+                .attr("y", d => yScale(d.label) ?? 0)
+                .attr("width", d => Math.abs(xScale(d.cumEnd) - xScale(d.cumStart)))
+                .attr("height", yScale.bandwidth())
+                .attr("fill", d => this.isHighContrast
+                    ? this.colorPalette.foreground.value
+                    : this.barFillFor(gradCache, this.resolveBarColor(d, positiveColor, negativeColor, totalColor)))
+                .attr("rx", 3).attr("ry", 3)
+                .style("filter", d => this.glowFor(this.resolveBarColor(d, positiveColor, negativeColor, totalColor)) || null)
+                .each((d, i, nodes) => this.settleColumn(nodes[i] as SVGElement, "scaleX"));
+        }
 
         // High contrast overrides for horizontal bars, connectors, axes, gridlines, and labels
         if (this.isHighContrast) {
             const hcFg = this.colorPalette.foreground.value;
-            barGroup.select("rect").attr("fill", hcFg);
+            barGroup.selectAll("rect").attr("fill", hcFg);
             this.chartGroup.selectAll(".connector").attr("stroke", hcFg);
             this.chartGroup.selectAll(".grid-line").attr("stroke", hcFg).attr("opacity", 0.3);
             this.chartGroup.selectAll(".axis-line").attr("stroke", hcFg);

@@ -106,6 +106,12 @@
                         ]
                     },
                     "displayName": "Orientation"
+                },
+                "quantisedMode": {
+                    "displayName": "Quantised Bars",
+                    "type": {
+                        "bool": true
+                    }
                 }
             },
             "displayName": "Waterfall Settings"

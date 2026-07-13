@@ -105,10 +105,20 @@ class WaterfallSettingsCard extends FormattingSettingsCard {
         value: { displayName: "Vertical", value: "vertical" }
     });
 
+    // v2 design signature (board: "LED-block bridge — the suite's signature
+    // texture"). Default ON to match the Codex design suite look.
+    quantisedMode = new formattingSettings.ToggleSwitch({
+        name: "quantisedMode",
+        displayName: "Quantised Bars",
+        description: "Render columns as LED-block segments (the suite's signature texture)",
+        value: true
+    });
+
     name: string = "waterfallSettings";
     displayName: string = "Waterfall";
     slices: Array<FormattingSettingsSlice> = [
         this.orientation,
+        this.quantisedMode,
         this.positiveColor,
         this.negativeColor,
         this.totalColor,
