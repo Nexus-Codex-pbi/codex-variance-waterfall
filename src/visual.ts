@@ -969,7 +969,7 @@ export class Visual implements IVisual {
                 .style("font-weight", axisLabelWeight)
                 .style("font-style", axisLabelStyle)
                 .style("text-decoration", axisLabelDecoration)
-                .text(d => formatValue(d, "auto", 0));
+                .text(d => formatValue(d, displayUnits, decimalPlaces));
         }
 
         // X axis line
@@ -1249,7 +1249,8 @@ export class Visual implements IVisual {
             .style("font-weight", axisLabelWeight)
             .style("font-style", axisLabelStyle)
             .style("text-decoration", axisLabelDecoration)
-            .text(d => formatValue(d, "auto", 0));
+            // drawYAxis doesn't receive the format settings; use the resolved cache (set in update)
+            .text(d => formatValue(d, this.currentDisplayUnits, this.currentDecimalPlaces));
 
         // Axis line
         this.chartGroup.append("line").classed("axis-line", true)
