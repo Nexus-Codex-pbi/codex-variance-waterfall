@@ -785,9 +785,12 @@ export class Visual implements IVisual {
         const allVals = bars.flatMap(b => [b.cumStart, b.cumEnd]);
         let yMin = d3Array.min(allVals) ?? 0;
         let yMax = d3Array.max(allVals) ?? 0;
-        const yPad = (yMax - yMin) * 0.05 || 1;
-        yMin -= yPad; yMax += yPad;
-
+        // AXIS STABILITY: the pad used to be 5% of the CURRENT range, so it grew
+        // with the data and pushed .nice() across a rounding boundary mid-render
+        // — every bar shifted at once, which reads as a jolt when the values
+        // animate. .nice() already rounds the domain outward and supplies the
+        // headroom the pad was there for, so the domain now only changes when the
+        // data genuinely crosses a round boundary instead of drifting every frame.
         const yScale = d3Scale.scaleLinear().domain([yMin, yMax]).range([plotHeight, 0]).nice();
 
         if (showAxisLabels) {
@@ -945,9 +948,11 @@ export class Visual implements IVisual {
         const allVals = bars.flatMap(b => [b.cumStart, b.cumEnd]);
         let xMin = d3Array.min(allVals) ?? 0;
         let xMax = d3Array.max(allVals) ?? 0;
-        const xPad = (xMax - xMin) * 0.05 || 1;
-        xMin -= xPad; xMax += xPad;
-
+        // AXIS STABILITY — see the vertical branch above. The proportional pad
+        // grew with the data and tipped .nice() onto a new round number partway
+        // through an animated sweep (observed: ~450K -> 500K between frames,
+        // shifting every bar at once). .nice() supplies the outward rounding on
+        // its own, so the domain now holds until the data crosses a boundary.
         const xScale = d3Scale.scaleLinear().domain([xMin, xMax]).range([0, plotWidth]).nice();
 
         // Draw X axis (value axis, bottom)
