@@ -30,7 +30,7 @@
     "@types/d3-scale": "^4.0.9",
     "@types/d3-selection": "^3.0.11",
     "@typescript-eslint/eslint-plugin": "^8.8.0",
-    "eslint": "^9.11.1",
+    "eslint": "^10.8.0",
     "eslint-plugin-powerbi-visuals": "^1.0.0",
     "typescript": "5.5.4"
   }
