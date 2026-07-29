@@ -1,4 +1,8 @@
-@import (reference) "../../_templates/style/brand.less";
+// brand tokens are VENDORED here, not imported from ../../_templates/.
+// That path resolves outside the repo: it exists in the monorepo working tree
+// so local builds passed, but a clean clone of the certification branch (what a
+// cert reviewer builds) failed with a Less resolver error and no package.
+@import (reference) "brand.less";
 
 .variance-waterfall {
     width: 100%;
