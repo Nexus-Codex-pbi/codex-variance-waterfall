@@ -88,6 +88,11 @@ export class Visual implements IVisual {
 
     // Current data for tooltip/selection lookups
     private currentBars: WaterfallBar[] = [];
+    /** 1180.2.4 — categories dropped this render because their variance was blank
+     * or non-numeric. Set during parse, read by the renderer to declare the
+     * omission on the canvas. Not the same as a category whose variance is a real
+     * zero, which legitimately draws no bar. */
+    private unusableCategoryCount = 0;
     private currentDisplayUnits: string = "auto";
     private currentDecimalPlaces: number = 0;
 
@@ -572,15 +577,38 @@ export class Visual implements IVisual {
         const axisLabelStyle = ax.axisLabelItalic.value ? "italic" : "normal";
         const axisLabelDecoration = ax.axisLabelUnderline.value ? "underline" : "none";
 
+        // 1180.2.4 Data Types — `Number(x) || 0` is the worst available coercion
+        // here. Number(null) and Number("") are both 0, Number("n/a") is NaN which
+        // `||` also turns into 0, and `||` swallows a legitimate 0 as well. Every
+        // one of those collapsed to zero, and the `v !== 0` filter below then
+        // DELETED the category from the waterfall — no bar, no gap, no notice, just
+        // a driver silently missing from a chart whose whole job is accounting for
+        // a total. Blank and non-numeric are now distinguished from a real zero.
+        const asNumberOrNull = (raw: unknown): number | null => {
+            if (raw === null || raw === undefined) return null;
+            if (typeof raw === "string" && raw.trim() === "") return null;
+            const n = typeof raw === "number" ? raw : Number(raw);
+            return Number.isFinite(n) ? n : null;
+        };
+
         // Build category-variance pairs
         const startValue: number = startValueCol
-            ? (Number(startValueCol.values[0]) || 0)
+            ? (asNumberOrNull(startValueCol.values[0]) ?? 0)
             : 0;
 
         interface CatVar { cat: string; variance: number; catIndex: number; }
         let items: CatVar[] = [];
+        this.unusableCategoryCount = 0;
         for (let i = 0; i < categories.length; i++) {
-            const v = Number(varianceCol.values[i]) || 0;
+            const v = asNumberOrNull(varianceCol.values[i]);
+            if (v === null) {
+                // Blank or non-numeric: genuinely nothing to plot, but it is NOT a
+                // zero contribution. Counted so the reader can be told.
+                this.unusableCategoryCount++;
+                continue;
+            }
+            // A real 0 still contributes no bar to a waterfall, which is correct —
+            // but it is now distinguishable from missing data.
             if (v !== 0) {
                 items.push({ cat: String(categories[i]), variance: v, catIndex: i });
             }
@@ -888,6 +916,24 @@ export class Visual implements IVisual {
                     .attr("fill", titleColor)
                     .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
                     .text(xAxisTitle);
+            }
+            // 1180.2.4 — a waterfall accounts for a total, so a driver dropped for
+            // blank or non-numeric data has to be declared. Silently omitting it
+            // leaves the remaining bars looking like they add up when they do not.
+            const unusable = this.unusableCategoryCount;
+            if (unusable > 0) {
+                this.chartGroup.append("text")
+                    .classed("wf-unusable-notice", true)
+                    .attr("x", 0)
+                    .attr("y", -6)
+                    .attr("text-anchor", "start")
+                    .attr("font-size", `${Math.max(9, axisLabelFontSize - 1)}px`)
+                    .attr("fill", titleColor)
+                    .attr("opacity", 0.75)
+                    .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
+                    .text(unusable === 1
+                        ? "1 category omitted — no numeric value"
+                        : `${unusable} categories omitted — no numeric value`);
             }
             if (yAxisTitle) {
                 // Single transform string ensures translate applied BEFORE rotation
