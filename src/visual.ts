@@ -671,7 +671,7 @@ export class Visual implements IVisual {
         const weightFor = (bold: boolean | undefined, restWeight: string): string => bold ? "700" : restWeight;
 
         const valueFontFamily = lbl.fontFamily.value || "Segoe UI, Tahoma, Geneva, Verdana, sans-serif";
-        const valueWeight = weightFor(lbl.bold.value, "600");
+        const valueWeight = weightFor(lbl.bold.value, "400");
         const valueStyle = lbl.italic.value ? "italic" : "normal";
         const valueDecoration = lbl.underline.value ? "underline" : "none";
 
