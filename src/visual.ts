@@ -307,8 +307,9 @@ export class Visual implements IVisual {
             const bx = x(d), by = y(d), bw = w(d), bh = h(d);
             const col = this.isHighContrast ? this.colorPalette.foreground.value : color(d);
             const span = orientation === "v" ? bh : bw;
+            if (span <= 0) return;
             const n = Math.max(1, Math.floor((span + GAP) / (SEG + GAP)));
-            const segLen = Math.max(2, (span - (n - 1) * GAP) / n);
+            const segLen = (span - (n - 1) * GAP) / n;
             const glow = this.glowFor(col) || null;
             for (let k = 0; k < n; k++) {
                 const off = k * (segLen + GAP);
@@ -322,6 +323,26 @@ export class Visual implements IVisual {
                 if (glow) rect.style("filter", glow);
             }
             this.settleColumn(g.node() as SVGElement, orientation === "v" ? "scaleY" : "scaleX");
+        });
+    }
+
+    /** Keep glyphs continuous across LED gaps and the solid bar's bevel. */
+    private addLabelBackings(
+        groups: d3Selection.Selection<SVGGElement, WaterfallBar, SVGGElement, unknown>,
+        inside: (d: WaterfallBar) => boolean,
+        color: (d: WaterfallBar) => string
+    ): void {
+        groups.each((d, index, nodes) => {
+            const group = d3Selection.select(nodes[index]);
+            const label = group.select<SVGTextElement>(".bar-label").node();
+            if (!label || !inside(d)) return;
+            const box = label.getBBox();
+            group.insert("rect", ".bar-label")
+                .classed("wf-label-backing", true)
+                .attr("x", box.x - 2).attr("y", box.y - 1)
+                .attr("width", box.width + 4).attr("height", box.height + 2)
+                .attr("fill", this.isHighContrast ? this.colorPalette.foreground.value : color(d))
+                .style("pointer-events", "none");
         });
     }
 
@@ -991,6 +1012,9 @@ export class Visual implements IVisual {
                     return pos === "inside" ? hcBg : hcFg;
                 });
             }
+            this.addLabelBackings(barGroup,
+                d => this.resolvePosition(valuePosition, Math.abs(yScale(d.cumStart) - yScale(d.cumEnd)), fontSize) === "inside",
+                d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor));
         }
 
         // Axis titles (vertical mode: X = categories, Y = values)
@@ -1242,6 +1266,9 @@ export class Visual implements IVisual {
                     return pos === "inside" ? hcBg : hcFg;
                 });
             }
+            this.addLabelBackings(barGroup,
+                d => this.resolvePosition(valuePosition, Math.abs(xScale(d.cumStart) - xScale(d.cumEnd)), fontSize * 3) === "inside",
+                d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor));
         }
 
         // Axis titles (horizontal mode: X = values, Y = categories)
@@ -1385,6 +1412,7 @@ export class Visual implements IVisual {
 
     /** Resolve "auto" position: inside if bar is tall enough, otherwise outside */
     private resolvePosition(position: string, barHeight: number, fontSize: number): string {
+        if (barHeight <= 0) return "outside";
         if (position === "inside") return "inside";
         if (position === "outside") return "outside";
         // auto: inside if bar is at least 1.5x font height
