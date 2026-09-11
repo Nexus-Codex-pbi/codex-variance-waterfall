@@ -385,6 +385,7 @@ export class Visual implements IVisual {
         // Clear previous render
         this.chartGroup.selectAll("*").remove();
         this.svg.selectAll(".empty-message").remove();
+        this.svg.selectAll(".wf-unusable-notice").remove();
 
         const width = options.viewport.width;
         const height = options.viewport.height;
@@ -813,6 +814,16 @@ export class Visual implements IVisual {
         this.lastDataSignature = dataSignature;
 
         const orientation = String(wf.orientation.value?.value || "vertical");
+        const noticeHeight = this.unusableCategoryCount > 0 ? 20 : 0;
+        if (noticeHeight) {
+            const count = this.unusableCategoryCount;
+            this.svg.append("text")
+                .classed("wf-unusable-notice", true)
+                .attr("x", 8).attr("y", titleH + 14)
+                .attr("font-size", "11px")
+                .attr("fill", this.isHighContrast ? this.colorPalette.foreground.value : axisLabelColor)
+                .text(`${count} ${count === 1 ? "category" : "categories"} omitted - no numeric value; totals are partial`);
+        }
 
         if (orientation === "horizontal") {
             this.renderHorizontal(bars, width, height, barWidthRatio,
@@ -821,7 +832,7 @@ export class Visual implements IVisual {
                 showValues, valuePosition, fontSize, displayUnits, decimalPlaces,
                 customValueColor, showAxisLabels, axisLabelColor, axisLabelFontSize,
                 gridlineColor, gridlineWidth, showGridlines, axisLineColor,
-                showAxisTitles, xAxisTitle, yAxisTitle, titleH,
+                showAxisTitles, xAxisTitle, yAxisTitle, titleH + noticeHeight,
                 valueFontFamily, valueWeight, valueStyle, valueDecoration,
                 axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
         } else {
@@ -831,7 +842,7 @@ export class Visual implements IVisual {
                 showValues, valuePosition, fontSize, displayUnits, decimalPlaces,
                 customValueColor, showAxisLabels, axisLabelColor, axisLabelFontSize,
                 gridlineColor, gridlineWidth, showGridlines, axisLineColor,
-                showAxisTitles, xAxisTitle, yAxisTitle, titleH,
+                showAxisTitles, xAxisTitle, yAxisTitle, titleH + noticeHeight,
                 valueFontFamily, valueWeight, valueStyle, valueDecoration,
                 axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
         }
@@ -996,24 +1007,6 @@ export class Visual implements IVisual {
                     .attr("fill", titleColor)
                     .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
                     .text(xAxisTitle);
-            }
-            // 1180.2.4 — a waterfall accounts for a total, so a driver dropped for
-            // blank or non-numeric data has to be declared. Silently omitting it
-            // leaves the remaining bars looking like they add up when they do not.
-            const unusable = this.unusableCategoryCount;
-            if (unusable > 0) {
-                this.chartGroup.append("text")
-                    .classed("wf-unusable-notice", true)
-                    .attr("x", 0)
-                    .attr("y", -6)
-                    .attr("text-anchor", "start")
-                    .attr("font-size", `${Math.max(9, axisLabelFontSize - 1)}px`)
-                    .attr("fill", titleColor)
-                    .attr("opacity", 0.75)
-                    .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
-                    .text(unusable === 1
-                        ? "1 category omitted — no numeric value"
-                        : `${unusable} categories omitted — no numeric value`);
             }
             if (yAxisTitle) {
                 // Single transform string ensures translate applied BEFORE rotation
@@ -1226,7 +1219,8 @@ export class Visual implements IVisual {
                         ? statusGlyph(d.type === "positive" ? "up" : "down") + " "
                         : "";
                     const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
-                    return glyph + prefix + this.formatMeasure(d.value, displayUnits, decimalPlaces);
+                    return glyph + prefix + this.formatMeasure(d.value, displayUnits, decimalPlaces)
+                        + (d.key === "#end" && this.unusableCategoryCount ? " (partial)" : "");
                 });
 
             // High contrast overrides for horizontal value labels
@@ -1328,7 +1322,8 @@ export class Visual implements IVisual {
                     ? statusGlyph(d.type === "positive" ? "up" : "down") + " "
                     : "";
                 const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
-                return glyph + prefix + this.formatMeasure(d.value, displayUnits, decimalPlaces);
+                return glyph + prefix + this.formatMeasure(d.value, displayUnits, decimalPlaces)
+                    + (d.key === "#end" && this.unusableCategoryCount ? " (partial)" : "");
             });
     }
 
