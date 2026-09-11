@@ -5,5 +5,6 @@
     "Role_StartValue": "Start Value",
     "Role_Variance": "Variance",
     "Empty_Title": "Add Category, Start Value, and Variance fields to build the waterfall.",
+    "Empty_NoOpening": "Start Value has no numeric opening balance for this selection — the waterfall cannot be based.",
     "Overflow_Other": "Other"
 }

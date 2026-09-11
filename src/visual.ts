@@ -502,6 +502,17 @@ export class Visual implements IVisual {
         const categories = categorical.categories[0].values as string[];
         this.categoricalCategories = categorical.categories[0];
 
+        // A bound category column carrying ZERO rows is empty input, not a
+        // waterfall of length zero. The guard above only rejects a missing
+        // category COLUMN, so a present-but-empty values array fell through and
+        // drew two anchors at 0 — a fabricated opening and closing balance for a
+        // query that returned nothing (NEXUS cycle-14 §2).
+        if (!categories.length) {
+            this.renderEmpty(width, height);
+            this.eventService.renderingFinished(options);
+            return;
+        }
+
         // Find startValue and variance columns by role
         let startValueCol: powerbi.DataViewValueColumn | null = null;
         let varianceCol: powerbi.DataViewValueColumn | null = null;
@@ -616,9 +627,26 @@ export class Visual implements IVisual {
         };
 
         // Build category-variance pairs
-        const startValue: number = startValueCol
-            ? (asNumberOrNull(startValueCol.values[0]) ?? 0)
-            : 0;
+        //
+        // The opening balance is the ONE number every other position in a
+        // waterfall is measured from, so a missing one cannot be defaulted the
+        // way an absent field can (NEXUS cycle-14 §2):
+        //   - Start Value role NOT bound  -> documented zero baseline, unchanged.
+        //   - Start Value role bound, first reading blank/non-numeric -> a
+        //     MISSING MEASUREMENT. `?? 0` asserted an opening of 0, which drew a
+        //     zero anchor, re-based every driver against it and closed the chart
+        //     on a total that was never in the model. No baseline, no bridge:
+        //     the visual says so instead of inventing one.
+        const boundOpening: number | null = startValueCol
+            ? asNumberOrNull(startValueCol.values[0])
+            : null;
+        if (startValueCol && boundOpening === null) {
+            this.renderEmpty(width, height, this.localizationManager.getDisplayName("Empty_NoOpening")
+                || "Start Value has no numeric opening balance for this selection — the waterfall cannot be based.");
+            this.eventService.renderingFinished(options);
+            return;
+        }
+        const startValue: number = boundOpening ?? 0;
 
         interface CatVar { cat: string; variance: number; catIndex: number; }
         let items: CatVar[] = [];
@@ -1391,10 +1419,11 @@ export class Visual implements IVisual {
     }
 
     /** Render empty state message */
-    private renderEmpty(width: number, height: number): void {
+    private renderEmpty(width: number, height: number, message?: string): void {
         // Muted card signature on the landing/empty state (§4).
         applyCardSignature(this.cornerSignature, this.formattingSettings?.cardSignature, { autoHex: "#8f8ab8", muted: true });
-        const emptyText = this.localizationManager.getDisplayName("Empty_Title")
+        const emptyText = message
+            || this.localizationManager.getDisplayName("Empty_Title")
             || "Add Category, Start Value, and Variance fields to build the waterfall.";
         const fillColor = this.isHighContrast ? this.colorPalette.foreground.value : "#5e5d5a";
 
