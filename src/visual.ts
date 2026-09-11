@@ -364,7 +364,7 @@ export class Visual implements IVisual {
         groups.each((d, index, nodes) => {
             const group = d3Selection.select(nodes[index]);
             const label = group.select<SVGTextElement>(".bar-label").node();
-            if (!label || !inside(d)) return;
+            if (!label || label.style.display === "none" || !inside(d)) return;
             const box = label.getBBox();
             group.insert("rect", ".bar-label")
                 .classed("wf-label-backing", true)
@@ -373,6 +373,51 @@ export class Visual implements IVisual {
                 .attr("fill", this.isHighContrast ? this.colorPalette.foreground.value : color(d))
                 .style("pointer-events", "none");
         });
+    }
+
+    private textWidth(text: string, size: number, family: string, weight = "400"): number {
+        const probe = this.svg.append("text")
+            .attr("font-size", `${size}px`).attr("font-family", family)
+            .style("font-weight", weight).attr("visibility", "hidden").text(text);
+        const width = probe.node()?.getComputedTextLength() || 0;
+        probe.remove();
+        return width;
+    }
+
+    /** Truncate by rendered width; the complete caption stays on native hover. */
+    private fitText(node: SVGTextElement, width: number): void {
+        const full = node.textContent || "";
+        if (node.getComputedTextLength() > Math.max(0, width)) {
+            let lo = 0, hi = full.length;
+            while (lo < hi) {
+                const mid = Math.ceil((lo + hi) / 2);
+                node.textContent = full.slice(0, mid) + "...";
+                if (node.getComputedTextLength() <= width) lo = mid;
+                else hi = mid - 1;
+            }
+            node.textContent = full.slice(0, lo) + "...";
+            if (node.getComputedTextLength() > width) node.textContent = "";
+        }
+        d3Selection.select(node).append("title").text(full);
+    }
+
+    private fitValueLabels(
+        groups: d3Selection.Selection<SVGGElement, WaterfallBar, SVGGElement, unknown>,
+        maxWidth: number, maxHeight: number
+    ): void {
+        groups.select<SVGTextElement>(".bar-label").each((d, index, nodes) => {
+            const node = nodes[index], box = node.getBBox();
+            const size = parseFloat(node.getAttribute("font-size") || "11");
+            const fitted = size * Math.min(1, maxWidth / Math.max(1, box.width), maxHeight / Math.max(1, box.height));
+            if (fitted < 6) node.style.display = "none";
+            else node.setAttribute("font-size", `${fitted}px`);
+        });
+    }
+
+    private renderCompact(width: number, height: number): void {
+        this.titleEl.style("display", "none");
+        this.svg.selectAll(".wf-unusable-notice").remove();
+        this.renderEmpty(width, height, "Resize");
     }
 
     /** Glow filter for driver/anchor columns — dark theme only, never
@@ -547,6 +592,7 @@ export class Visual implements IVisual {
                 .style("fill", this.isHighContrast ? this.colorPalette.foreground.value : adaptiveTitle)
                 .text(String(titleFmt.titleText.value))
                 .style("display", null);
+            this.fitText(this.titleEl.node() as SVGTextElement, Math.max(0, width - 16));
         } else {
             this.titleEl.style("display", "none");
         }
@@ -940,21 +986,29 @@ export class Visual implements IVisual {
         const AXIS_TITLE_BOTTOM_PAD = 8;
         const AXIS_TITLE_LEFT_GAP = 10;
         const extraBottom = (showAxisTitles && xAxisTitle)
-            ? (bars.length > 6 ? axisLabelFontSize * 5 : 0) + axisTitleFontSize + AXIS_TITLE_TICK_GAP + AXIS_TITLE_BOTTOM_PAD
+            ? axisTitleFontSize + AXIS_TITLE_TICK_GAP + AXIS_TITLE_BOTTOM_PAD
             : 0;
         const extraLeft = (showAxisTitles && yAxisTitle)
             ? axisTitleFontSize + AXIS_TITLE_LEFT_GAP
             : 0;
+        const allVals = bars.flatMap(b => [b.cumStart, b.cumEnd]);
+        const yScale = d3Scale.scaleLinear()
+            .domain([d3Array.min(allVals) ?? 0, d3Array.max(allVals) ?? 0]).nice();
+        const tickWidth = Math.max(0, ...yScale.ticks(6).map(value =>
+            this.textWidth(this.formatMeasure(value, displayUnits, decimalPlaces), axisLabelFontSize, axisLabelFontFamily, axisLabelWeight)));
         const effectiveMargin = {
-            top: this.margin.top + titleH,
+            top: Math.max(this.margin.top, showValues ? fontSize + 10 : 12) + titleH,
             right: this.margin.right,
-            bottom: this.margin.bottom + extraBottom,
-            left: this.margin.left + extraLeft
+            bottom: (showAxisLabels ? axisLabelFontSize * 1.4 + 20 : 12) + extraBottom,
+            left: 8 + extraLeft + (showAxisLabels ? tickWidth + 10 : 0)
         };
 
         const plotWidth = width - effectiveMargin.left - effectiveMargin.right;
         const plotHeight = height - effectiveMargin.top - effectiveMargin.bottom;
-        if (plotWidth <= 0 || plotHeight <= 0) return;
+        if (plotWidth < 32 || plotHeight < 24) {
+            this.renderCompact(width, height);
+            return;
+        }
 
         this.chartGroup.attr("transform", `translate(${effectiveMargin.left},${effectiveMargin.top})`);
 
@@ -969,22 +1023,20 @@ export class Visual implements IVisual {
             .range([0, plotWidth])
             .padding(1 - barWidthRatio);
 
-        const allVals = bars.flatMap(b => [b.cumStart, b.cumEnd]);
-        let yMin = d3Array.min(allVals) ?? 0;
-        let yMax = d3Array.max(allVals) ?? 0;
         // AXIS STABILITY: the pad used to be 5% of the CURRENT range, so it grew
         // with the data and pushed .nice() across a rounding boundary mid-render
         // — every bar shifted at once, which reads as a jolt when the values
         // animate. .nice() already rounds the domain outward and supplies the
         // headroom the pad was there for, so the domain now only changes when the
         // data genuinely crosses a round boundary instead of drifting every frame.
-        const yScale = d3Scale.scaleLinear().domain([yMin, yMax]).range([plotHeight, 0]).nice();
+        yScale.range([plotHeight, 0]);
 
-        if (showAxisLabels) {
-            this.drawYAxis(yScale, plotHeight, plotWidth, axisLabelColor, axisLabelFontSize, gridlineColor, gridlineWidth, showGridlines, axisLineColor,
-                axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
-            this.drawXAxis(xScale, bars, plotHeight, bars.length, axisLabelColor, axisLabelFontSize, axisLineColor,
-                axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
+        this.drawYAxis(yScale, plotHeight, plotWidth, axisLabelColor, axisLabelFontSize, gridlineColor, gridlineWidth, showGridlines, axisLineColor,
+            axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
+        this.drawXAxis(xScale, bars, plotHeight, bars.length, axisLabelColor, axisLabelFontSize, axisLineColor,
+            axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
+        if (!showAxisLabels) {
+            this.chartGroup.selectAll(".y-tick,.x-label").remove();
         }
 
         // v2 (01-17): connectors are solid 1.5px hairlines at 55% opacity
@@ -1052,6 +1104,7 @@ export class Visual implements IVisual {
                     return pos === "inside" ? hcBg : hcFg;
                 });
             }
+            this.fitValueLabels(barGroup, Math.max(0, xScale.step() - 6), Number.POSITIVE_INFINITY);
             this.addLabelBackings(barGroup,
                 d => this.resolvePosition(valuePosition, Math.abs(yScale(d.cumStart) - yScale(d.cumEnd)), fontSize) === "inside",
                 d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor));
@@ -1061,12 +1114,8 @@ export class Visual implements IVisual {
         if (showAxisTitles) {
             const titleColor = this.isHighContrast ? this.colorPalette.foreground.value : axisLabelColor;
             if (xAxisTitle) {
-                // Clear the category labels: when rotated (barCount>6) they
-                // extend well below plotHeight, so the title must sit below
-                // that extent, not just below the tick row (Neil 2026-07-13:
-                // "Axis" title overlapped FX Headwind).
-                const rotatedLabels = bars.length > 6;
-                const labelAllowance = rotatedLabels ? axisLabelFontSize * 5 : axisLabelFontSize + 4;
+                // The category row and title have separate measured allowances.
+                const labelAllowance = showAxisLabels ? axisLabelFontSize * 1.4 + 12 : 0;
                 const titleY = plotHeight + labelAllowance + AXIS_TITLE_TICK_GAP + axisTitleFontSize;
                 this.chartGroup.append("text")
                     .classed("axis-title x-axis-title", true)
@@ -1083,7 +1132,7 @@ export class Visual implements IVisual {
                 // Single transform string ensures translate applied BEFORE rotation
                 // (d3 .attr() order is otherwise honoured but separate transform attrs
                 // can lose the rotate when written sequentially in some pipelines).
-                const titleX = -(extraLeft - AXIS_TITLE_LEFT_GAP / 2);
+                const titleX = -(effectiveMargin.left - 8 - axisTitleFontSize / 2);
                 const titleY = plotHeight / 2;
                 this.chartGroup.append("text")
                     .classed("axis-title y-axis-title", true)
@@ -1117,15 +1166,32 @@ export class Visual implements IVisual {
         const AXIS_TITLE_BOTTOM_PAD = 8;
         const AXIS_TITLE_LEFT_GAP = 10;
         const extraBottom = (showAxisTitles && xAxisTitle)
-            ? (bars.length > 6 ? axisLabelFontSize * 5 : 0) + axisTitleFontSize + AXIS_TITLE_TICK_GAP + AXIS_TITLE_BOTTOM_PAD
+            ? axisTitleFontSize + AXIS_TITLE_TICK_GAP + AXIS_TITLE_BOTTOM_PAD
             : 0;
         const extraLeft = (showAxisTitles && yAxisTitle)
             ? axisTitleFontSize + AXIS_TITLE_LEFT_GAP
             : 0;
-        const hMargin = { top: 20 + titleH, right: 30, bottom: 30 + extraBottom, left: 100 + extraLeft };
+        const allVals = bars.flatMap(b => [b.cumStart, b.cumEnd]);
+        const xScale = d3Scale.scaleLinear()
+            .domain([d3Array.min(allVals) ?? 0, d3Array.max(allVals) ?? 0]).nice();
+        const categoryWidth = Math.min(width * 0.3, 2 + Math.max(0, ...bars.map(b =>
+            this.textWidth(b.label, axisLabelFontSize, axisLabelFontFamily, axisLabelWeight))));
+        const tickWidth = Math.max(0, ...xScale.ticks(6).map(value =>
+            this.textWidth(this.formatMeasure(value, displayUnits, decimalPlaces), axisLabelFontSize, axisLabelFontFamily, axisLabelWeight)));
+        const valueWidth = showValues ? Math.max(0, ...bars.map(b =>
+            this.textWidth(this.barLabel(b, displayUnits, decimalPlaces), fontSize, valueFontFamily, valueWeight))) : 0;
+        const outsideSpace = valuePosition === "inside" ? 0 : valueWidth + 8;
+        const hMargin = {
+            top: 20 + titleH, right: Math.max(12, tickWidth / 2 + 8, outsideSpace),
+            bottom: Math.max(24, axisLabelFontSize + 16) + extraBottom,
+            left: 8 + extraLeft + (showAxisLabels ? categoryWidth + 8 : 0) + outsideSpace
+        };
         const plotWidth = width - hMargin.left - hMargin.right;
         const plotHeight = height - hMargin.top - hMargin.bottom;
-        if (plotWidth <= 0 || plotHeight <= 0) return;
+        if (plotWidth < 32 || plotHeight < 24) {
+            this.renderCompact(width, height);
+            return;
+        }
 
         this.chartGroup.attr("transform", `translate(${hMargin.left},${hMargin.top})`);
 
@@ -1136,18 +1202,18 @@ export class Visual implements IVisual {
             .range([0, plotHeight])
             .padding(1 - barWidthRatio);
 
-        const allVals = bars.flatMap(b => [b.cumStart, b.cumEnd]);
-        let xMin = d3Array.min(allVals) ?? 0;
-        let xMax = d3Array.max(allVals) ?? 0;
         // AXIS STABILITY — see the vertical branch above. The proportional pad
         // grew with the data and tipped .nice() onto a new round number partway
         // through an animated sweep (observed: ~450K -> 500K between frames,
         // shifting every bar at once). .nice() supplies the outward rounding on
         // its own, so the domain now holds until the data crosses a boundary.
-        const xScale = d3Scale.scaleLinear().domain([xMin, xMax]).range([0, plotWidth]).nice();
+        xScale.range([0, plotWidth]);
+        const labelPosition = (d: WaterfallBar): string => this.resolvePosition(valuePosition,
+            Math.abs(xScale(d.cumEnd) - xScale(d.cumStart)),
+            (this.textWidth(this.barLabel(d, displayUnits, decimalPlaces), fontSize, valueFontFamily, valueWeight) + 8) / 1.5);
 
         // Draw X axis (value axis, bottom)
-        const xTicks = xScale.ticks(6);
+        const xTicks = xScale.ticks(Math.max(1, Math.min(6, Math.floor(plotWidth / (tickWidth + 12)))));
         if (showGridlines) {
             this.chartGroup.selectAll(".grid-line").data(xTicks).enter()
                 .append("line").classed("grid-line", true)
@@ -1177,14 +1243,21 @@ export class Visual implements IVisual {
         if (showAxisLabels) {
             this.chartGroup.selectAll(".y-label").data(bars).enter()
                 .append("text").classed("y-label", true)
-                .attr("x", -8).attr("y", d => (yScale(d.key) ?? 0) + yScale.bandwidth() / 2)
+                .attr("x", -8 - outsideSpace).attr("y", d => (yScale(d.key) ?? 0) + yScale.bandwidth() / 2)
                 .attr("text-anchor", "end").attr("dominant-baseline", "central")
                 .attr("font-size", `${axisLabelFontSize}px`).attr("fill", axisLabelColor)
                 .attr("font-family", axisLabelFontFamily)
                 .style("font-weight", axisLabelWeight)
                 .style("font-style", axisLabelStyle)
                 .style("text-decoration", axisLabelDecoration)
-                .text(d => d.label.length > 14 ? d.label.substring(0, 12) + "..." : d.label);
+                .text(d => d.label)
+                .each((d, index, nodes) => {
+                    const node = nodes[index];
+                    const font = Math.min(axisLabelFontSize, (yScale.step() - 2) / 1.3);
+                    if (font < 6) node.style.display = "none";
+                    else node.setAttribute("font-size", `${font}px`);
+                    this.fitText(node, categoryWidth);
+                });
         }
 
         // Y axis line
@@ -1251,7 +1324,7 @@ export class Visual implements IVisual {
                     const barLeft = xScale(Math.min(d.cumStart, d.cumEnd));
                     const barRight = xScale(Math.max(d.cumStart, d.cumEnd));
                     const barW = barRight - barLeft;
-                    const pos = this.resolvePosition(valuePosition, barW, fontSize * 3);
+                    const pos = labelPosition(d);
                     if (pos === "inside") return barLeft + barW / 2;
                     if (d.type === "negative") return barLeft - 4;
                     return barRight + 4;
@@ -1260,7 +1333,7 @@ export class Visual implements IVisual {
                     const barLeft = xScale(Math.min(d.cumStart, d.cumEnd));
                     const barRight = xScale(Math.max(d.cumStart, d.cumEnd));
                     const barW = barRight - barLeft;
-                    const pos = this.resolvePosition(valuePosition, barW, fontSize * 3);
+                    const pos = labelPosition(d);
                     if (pos === "inside") return "middle";
                     return d.type === "negative" ? "end" : "start";
                 })
@@ -1276,23 +1349,14 @@ export class Visual implements IVisual {
                     const barLeft = xScale(Math.min(d.cumStart, d.cumEnd));
                     const barRight = xScale(Math.max(d.cumStart, d.cumEnd));
                     const barW = barRight - barLeft;
-                    const pos = this.resolvePosition(valuePosition, barW, fontSize * 3);
+                    const pos = labelPosition(d);
                     if (pos === "inside") {
                         const c = this.resolveBarColor(d, positiveColor, negativeColor, totalColor);
                         return contrastInk(c, "#000000", "#ffffff");
                     }
                     return this.resolveValueFontColor(d, customValueColor);
                 })
-                .text(d => {
-                    // v2 HC (§8): a direction reading is never colour-only —
-                    // the up/down glyph rides along under high contrast.
-                    const glyph = this.hc.active && d.type !== "total"
-                        ? statusGlyph(d.type === "positive" ? "up" : "down") + " "
-                        : "";
-                    const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
-                    return glyph + prefix + this.formatMeasure(d.value, displayUnits, decimalPlaces)
-                        + (d.key === "#end" && this.unusableCategoryCount ? " (partial)" : "");
-                });
+                .text(d => this.barLabel(d, displayUnits, decimalPlaces));
 
             // High contrast overrides for horizontal value labels
             if (this.isHighContrast) {
@@ -1302,12 +1366,13 @@ export class Visual implements IVisual {
                     const barLeft = xScale(Math.min(d.cumStart, d.cumEnd));
                     const barRight = xScale(Math.max(d.cumStart, d.cumEnd));
                     const barW = barRight - barLeft;
-                    const pos = this.resolvePosition(valuePosition, barW, fontSize * 3);
+                    const pos = labelPosition(d);
                     return pos === "inside" ? hcBg : hcFg;
                 });
             }
+            this.fitValueLabels(barGroup, Number.POSITIVE_INFINITY, Math.max(0, yScale.step() - 2));
             this.addLabelBackings(barGroup,
-                d => this.resolvePosition(valuePosition, Math.abs(xScale(d.cumStart) - xScale(d.cumEnd)), fontSize * 3) === "inside",
+                d => labelPosition(d) === "inside",
                 d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor));
         }
 
@@ -1328,7 +1393,7 @@ export class Visual implements IVisual {
                     .text(xAxisTitle);
             }
             if (yAxisTitle) {
-                const titleX = -(extraLeft - AXIS_TITLE_LEFT_GAP / 2);
+                const titleX = -(hMargin.left - 8 - axisTitleFontSize / 2);
                 const titleY = plotHeight / 2;
                 this.chartGroup.append("text")
                     .classed("axis-title y-axis-title", true)
@@ -1389,16 +1454,15 @@ export class Visual implements IVisual {
             // v2 (01-17): value labels in tabular numerals (board .wvlab).
             .style("font-feature-settings", TABULAR_NUMS)
             .attr("font-family", valueFontFamily)
-            .text(d => {
-                // v2 HC (§8): a direction reading is never colour-only —
-                // the up/down glyph rides along under high contrast.
-                const glyph = this.hc.active && d.type !== "total"
-                    ? statusGlyph(d.type === "positive" ? "up" : "down") + " "
-                    : "";
-                const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
-                return glyph + prefix + this.formatMeasure(d.value, displayUnits, decimalPlaces)
-                    + (d.key === "#end" && this.unusableCategoryCount ? " (partial)" : "");
-            });
+            .text(d => this.barLabel(d, displayUnits, decimalPlaces));
+    }
+
+    private barLabel(d: WaterfallBar, units: string, decimals: number): string {
+        const glyph = this.hc.active && d.type !== "total"
+            ? statusGlyph(d.type === "positive" ? "up" : "down") + " " : "";
+        const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
+        return glyph + prefix + this.formatMeasure(d.value, units, decimals)
+            + (d.key === "#end" && this.unusableCategoryCount ? " (partial)" : "");
     }
 
     /**
@@ -1466,7 +1530,7 @@ export class Visual implements IVisual {
         gridlineColor: string, gridlineWidth: number, showGridlines: boolean, axisLineColor: string,
         axisLabelFontFamily: string, axisLabelWeight: string, axisLabelStyle: string, axisLabelDecoration: string
     ): void {
-        const ticks = yScale.ticks(6);
+        const ticks = yScale.ticks(Math.max(1, Math.min(6, Math.floor(plotHeight / (axisLabelFontSize + 8)))));
 
         // Gridlines
         if (showGridlines) {
@@ -1524,9 +1588,7 @@ export class Visual implements IVisual {
         axisLabelColor: string, axisLabelFontSize: number, axisLineColor: string,
         axisLabelFontFamily: string, axisLabelWeight: string, axisLabelStyle: string, axisLabelDecoration: string
     ): void {
-        // The domain now holds keys, so the tick row is driven by the bars
-        // themselves: positioned by key, captioned by label (NEXUS cycle-14 §3).
-        const rotate = barCount > 6;
+        // Position by key and fit the caption to the available category pitch.
 
         // Axis line
         this.chartGroup.append("line").classed("axis-line", true)
@@ -1543,7 +1605,7 @@ export class Visual implements IVisual {
             .classed("x-label", true)
             .attr("x", d => (xScale(d.key) ?? 0) + xScale.bandwidth() / 2)
             .attr("y", plotHeight + 12)
-            .attr("text-anchor", rotate ? "end" : "middle")
+            .attr("text-anchor", "middle")
             .attr("dominant-baseline", "hanging")
             .attr("font-size", `${axisLabelFontSize}px`)
             .attr("fill", axisLabelColor)
@@ -1551,12 +1613,8 @@ export class Visual implements IVisual {
             .style("font-weight", axisLabelWeight)
             .style("font-style", axisLabelStyle)
             .style("text-decoration", axisLabelDecoration)
-            .attr("transform", d => {
-                if (!rotate) return "";
-                const cx = (xScale(d.key) ?? 0) + xScale.bandwidth() / 2;
-                return `rotate(-45, ${cx}, ${plotHeight + 12})`;
-            })
-            .text(d => d.label.length > 14 ? d.label.substring(0, 12) + "..." : d.label);
+            .text(d => d.label)
+            .each((d, index, nodes) => this.fitText(nodes[index], Math.max(0, xScale.step() - 6)));
 
         // High contrast overrides for X axis
         if (this.isHighContrast) {
@@ -1580,13 +1638,15 @@ export class Visual implements IVisual {
         const fillColor = this.isHighContrast ? this.colorPalette.foreground.value
             : mutedInk(this.surfaceInk, this.surfaceHex);
 
+        const fontSize = Math.max(1, Math.min(14, height - 8,
+            14 * Math.max(0, width - 16) / Math.max(1, this.textWidth(emptyText, 14, "Segoe UI, Tahoma, Geneva, Verdana, sans-serif"))));
         this.svg.append("text")
             .classed("empty-message", true)
             .attr("x", width / 2)
             .attr("y", height / 2)
             .attr("text-anchor", "middle")
             .attr("dominant-baseline", "central")
-            .attr("font-size", "14px")
+            .attr("font-size", `${fontSize}px`)
             .attr("fill", fillColor)
             .attr("font-family", "Segoe UI, Tahoma, Geneva, Verdana, sans-serif")
             .text(emptyText);
