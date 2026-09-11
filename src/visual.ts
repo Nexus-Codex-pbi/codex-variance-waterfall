@@ -25,7 +25,8 @@ import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
 import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
 import { VisualFormattingSettingsModel, textAlignFor } from "./settings";
-import { formatValue, clamp, contrastText } from "./utils";
+import { formatValue, unitScale, clamp, contrastText } from "./utils";
+import { formatModelNumber } from "./shared/numberFormat";
 import { toRgba } from "./shared/colorHelpers";
 import { Theme, directionColor, accentToken } from "./shared/bandEngine";
 import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
@@ -101,6 +102,10 @@ export class Visual implements IVisual {
     private unusableCategoryCount = 0;
     private currentDisplayUnits: string = "auto";
     private currentDecimalPlaces: number = 0;
+    /** The bound measure's own Power BI format string and the host locale —
+     *  the measure semantics every label used to throw away (cycle-14 §6). */
+    private modelFormat: string | null = null;
+    private hostLocale: string | undefined = undefined;
 
     // fx (TRANS-04) state
     private categoricalCategories: powerbi.DataViewCategoryColumn | undefined;
@@ -188,10 +193,10 @@ export class Visual implements IVisual {
             const bar = this.findBarFromEvent(e);
             if (bar) {
                 const items: VisualTooltipDataItem[] = [
-                    { displayName: bar.label, value: formatValue(bar.value, this.currentDisplayUnits, this.currentDecimalPlaces) }
+                    { displayName: bar.label, value: this.formatMeasure(bar.value, this.currentDisplayUnits, this.currentDecimalPlaces) }
                 ];
                 if (bar.type !== "total") {
-                    items.push({ displayName: "Running Total", value: formatValue(bar.cumEnd, this.currentDisplayUnits, this.currentDecimalPlaces) });
+                    items.push({ displayName: "Running Total", value: this.formatMeasure(bar.cumEnd, this.currentDisplayUnits, this.currentDecimalPlaces) });
                 }
                 this.tooltipService.show({
                     coordinates: [e.clientX, e.clientY],
@@ -533,6 +538,12 @@ export class Visual implements IVisual {
             this.eventService.renderingFinished(options);
             return;
         }
+
+        // The measure's own format string and the host locale (cycle-14 §6).
+        // Variance is the measure the chart is about; the opening balance's
+        // format is the fallback when only that one carries one.
+        this.modelFormat = (varianceCol.source.format || (startValueCol && startValueCol.source.format)) || null;
+        this.hostLocale = this.host.locale || undefined;
 
         // Extract settings
         const wf = this.formattingSettings.waterfallCard;
@@ -1090,7 +1101,7 @@ export class Visual implements IVisual {
                 .style("font-weight", axisLabelWeight)
                 .style("font-style", axisLabelStyle)
                 .style("text-decoration", axisLabelDecoration)
-                .text(d => formatValue(d, displayUnits, decimalPlaces));
+                .text(d => this.formatMeasure(d, displayUnits, decimalPlaces));
         }
 
         // X axis line
@@ -1215,7 +1226,7 @@ export class Visual implements IVisual {
                         ? statusGlyph(d.type === "positive" ? "up" : "down") + " "
                         : "";
                     const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
-                    return glyph + prefix + formatValue(d.value, displayUnits, decimalPlaces);
+                    return glyph + prefix + this.formatMeasure(d.value, displayUnits, decimalPlaces);
                 });
 
             // High contrast overrides for horizontal value labels
@@ -1317,8 +1328,57 @@ export class Visual implements IVisual {
                     ? statusGlyph(d.type === "positive" ? "up" : "down") + " "
                     : "";
                 const prefix = d.type !== "total" && d.value > 0 ? "+" : "";
-                return glyph + prefix + formatValue(d.value, displayUnits, decimalPlaces);
+                return glyph + prefix + this.formatMeasure(d.value, displayUnits, decimalPlaces);
             });
+    }
+
+    /**
+     * Label text for a measure value (NEXUS cycle-14 §6).
+     *
+     * The old path was `toFixed` plus hand-rolled K/M/B suffixes, which never
+     * looked at the model at all: a measure formatted `0.0%` printed 0.5 instead
+     * of 50%, `$#,##0.00` lost its currency symbol, and no label ever used the
+     * host locale's separators. Those are the measure's SEMANTICS, and dropping
+     * them turns a currency bridge into a bare number.
+     *
+     * Division of responsibility:
+     *   - model format string -> units (currency symbol, percentage) + digits
+     *     when the report has not said otherwise, via the shared formatter;
+     *   - host locale          -> grouping and decimal separators;
+     *   - Display Units        -> which magnitude the mantissa is printed at;
+     *   - Decimal Places       -> precision, always. It is a shipped control
+     *     whose default is 0, so the format's own fraction section must not
+     *     silently re-precision an existing report.
+     */
+    private formatMeasure(value: number, units: string, decimals: number): string {
+        // A null/non-finite reading is a gap, never a number (class 3).
+        if (value === null || value === undefined || !isFinite(value)) return "—";
+        const format = this.modelFormat;
+        // No format string on the measure: nothing to preserve, and the
+        // pre-existing numeric path stays byte-for-byte what it was.
+        if (!format) return formatValue(value, units, decimals);
+        if (format.indexOf("%") >= 0) {
+            // Power BI stores a percentage as its decimal fraction, so the ×100
+            // is a unit conversion, not a display unit — a percentage is never
+            // abbreviated on top of it.
+            return formatModelNumber(value, decimals > 0 ? `0.${"0".repeat(decimals)}%` : "0%", this.hostLocale);
+        }
+        const { divisor, suffix } = unitScale(value, units);
+        // The sign leads the whole figure, including the currency symbol: the
+        // shared formatter prefixes the symbol to whatever the locale printed,
+        // which reads "$-10.00". Print the magnitude and carry the sign here.
+        // The digit test keeps a value that rounds away to nothing from
+        // acquiring a "-0" (same guard the sibling visuals use).
+        const body = formatModelNumber(Math.abs(value) / divisor, Visual.withDecimals(format, decimals), this.hostLocale) + suffix;
+        return `${value < 0 && /[1-9]/.test(body) ? "-" : ""}${body}`;
+    }
+
+    /** The report's explicit Decimal Places written into the model format's own
+     *  fraction section, so the format's currency and grouping tokens survive
+     *  the precision override instead of being parsed out and rebuilt here. */
+    private static withDecimals(format: string, decimals: number): string {
+        const fraction = decimals > 0 ? "." + "0".repeat(decimals) : "";
+        return /\.[0#]+/.test(format) ? format.replace(/\.[0#]+/, fraction) : format + fraction;
     }
 
     /** Resolve "auto" position: inside if bar is tall enough, otherwise outside */
@@ -1370,7 +1430,7 @@ export class Visual implements IVisual {
             .style("font-style", axisLabelStyle)
             .style("text-decoration", axisLabelDecoration)
             // drawYAxis doesn't receive the format settings; use the resolved cache (set in update)
-            .text(d => formatValue(d, this.currentDisplayUnits, this.currentDecimalPlaces));
+            .text(d => this.formatMeasure(d, this.currentDisplayUnits, this.currentDecimalPlaces));
 
         // Axis line
         this.chartGroup.append("line").classed("axis-line", true)

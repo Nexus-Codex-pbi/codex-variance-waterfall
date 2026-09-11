@@ -34,22 +34,29 @@ export function safeNumber(v: any): number | null {
     return isNaN(n) ? null : n;
 }
 
+/** Divisor + suffix the display-units ladder applies to a value. Split out of
+ *  formatValue so a caller that prints the mantissa through a model-format-aware
+ *  formatter still scales it by exactly the same ladder. */
+export function unitScale(value: number, units: string = "auto"): { divisor: number; suffix: string } {
+    const abs = Math.abs(value);
+
+    if (units === "auto") {
+        if (abs >= 1e9) return { divisor: 1e9, suffix: "B" };
+        if (abs >= 1e6) return { divisor: 1e6, suffix: "M" };
+        if (abs >= 1e3) return { divisor: 1e3, suffix: "K" };
+        return { divisor: 1, suffix: "" };
+    }
+    if (units === "thousands") return { divisor: 1e3, suffix: "K" };
+    if (units === "millions") return { divisor: 1e6, suffix: "M" };
+    if (units === "billions") return { divisor: 1e9, suffix: "B" };
+    return { divisor: 1, suffix: "" };
+}
+
 /** Format a number with display units (auto/none/thousands/millions/billions) */
 export function formatValue(value: number, units: string = "auto", decimals: number = 1): string {
     if (value === null || value === undefined || isNaN(value)) return "—";
 
-    const abs = Math.abs(value);
-    let divisor = 1;
-    let suffix = "";
-
-    if (units === "auto") {
-        if (abs >= 1e9) { divisor = 1e9; suffix = "B"; }
-        else if (abs >= 1e6) { divisor = 1e6; suffix = "M"; }
-        else if (abs >= 1e3) { divisor = 1e3; suffix = "K"; }
-    } else if (units === "thousands") { divisor = 1e3; suffix = "K"; }
-    else if (units === "millions") { divisor = 1e6; suffix = "M"; }
-    else if (units === "billions") { divisor = 1e9; suffix = "B"; }
-
+    const { divisor, suffix } = unitScale(value, units);
     const scaled = value / divisor;
     return scaled.toFixed(decimals) + suffix;
 }
