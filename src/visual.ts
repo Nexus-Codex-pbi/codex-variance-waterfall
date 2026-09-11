@@ -79,7 +79,7 @@ export class Visual implements IVisual {
     private borderRect: Selection<SVGRectElement>;
     private titleEl: Selection<SVGTextElement>;
     private chartGroup: Selection<SVGGElement>;
-    private formattingSettings: VisualFormattingSettingsModel;
+    private formattingSettings = new VisualFormattingSettingsModel();
     private formattingSettingsService: FormattingSettingsService;
 
     // Current data for tooltip/selection lookups
