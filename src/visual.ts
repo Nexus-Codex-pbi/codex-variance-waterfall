@@ -121,6 +121,8 @@ export class Visual implements IVisual {
     private licenseGate: LicenseGate;
 
     private lastUpdateOptions: VisualUpdateOptions | null = null;
+    private destroyed = false;
+    private removeListeners: Array<() => void> = [];
 
 
     constructor(options: VisualConstructorOptions) {
@@ -145,7 +147,7 @@ export class Visual implements IVisual {
         this.isHighContrast = this.colorPalette.isHighContrast;
 
         // Context menu on right-click
-        this.target.addEventListener("contextmenu", (e: MouseEvent) => {
+        this.listen("contextmenu", (e: MouseEvent) => {
             e.preventDefault();
             if (this.host.allowInteractions === false) return;
             const bar = this.findBarFromEvent(e);
@@ -183,7 +185,7 @@ export class Visual implements IVisual {
         });
 
         // Tooltip on bar hover
-        this.target.addEventListener("mousemove", (e: MouseEvent) => {
+        this.listen("mousemove", (e: MouseEvent) => {
             const bar = this.findBarFromEvent(e);
             if (bar) {
                 const items: VisualTooltipDataItem[] = [
@@ -202,12 +204,12 @@ export class Visual implements IVisual {
                 this.tooltipService.hide({ isTouchEvent: false, immediately: false });
             }
         });
-        this.target.addEventListener("mouseleave", () => {
+        this.listen("mouseleave", () => {
             this.tooltipService.hide({ isTouchEvent: false, immediately: false });
         });
 
         // Cross-filtering on bar click
-        this.target.addEventListener("click", (e: MouseEvent) => {
+        this.listen("click", (e: MouseEvent) => {
             if (this.host.allowInteractions === false) return;
             const bar = this.findBarFromEvent(e);
             if (bar && bar.selectionId) {
@@ -217,7 +219,7 @@ export class Visual implements IVisual {
                 this.selectionManager.clear();
             }
         });
-        this.target.addEventListener("keydown", (e: KeyboardEvent) => {
+        this.listen("keydown", (e: KeyboardEvent) => {
             if (this.host.allowInteractions === false) return;
             const bar = this.findBarFromEvent(e);
             if ((e.key === "Enter" || e.key === " ") && bar?.selectionId) {
@@ -232,6 +234,11 @@ export class Visual implements IVisual {
                 this.selectionManager.showContextMenu(bar.selectionId, { x: box.x, y: box.bottom });
             }
         });
+    }
+
+    private listen<K extends keyof HTMLElementEventMap>(type: K, handler: (event: HTMLElementEventMap[K]) => void): void {
+        this.target.addEventListener(type, handler);
+        this.removeListeners.push(() => this.target.removeEventListener(type, handler));
     }
 
     /**
@@ -413,6 +420,7 @@ export class Visual implements IVisual {
     }
 
     public update(options: VisualUpdateOptions) {
+        if (this.destroyed) return;
         this.eventService.renderingStarted(options);
         this.lastUpdateOptions = options;
 
@@ -1580,12 +1588,24 @@ export class Visual implements IVisual {
     }
 
     public destroy(): void {
+        if (this.destroyed) return;
         // Drop the in-flight licence check FIRST: its redraw callback replays
         // update() against a torn-down target otherwise (NEXUS lifecycle finding).
         this.licenseGate.dispose();
+        this.destroyed = true;
+        this.lastUpdateOptions = null;
+        this.currentBars = [];
+        this.categoricalCategories = undefined;
+        this.positiveColorHelper = null;
+        this.negativeColorHelper = null;
+        this.valueFontColorHelper = null;
+        this.removeListeners.forEach(remove => remove());
+        this.removeListeners = [];
+        this.target.getAnimations({ subtree: true }).forEach(animation => animation.cancel());
+        this.tooltipService.hide({ isTouchEvent: false, immediately: true });
         this.cornerSignature?.destroy();
         this.cornerSignature = null;
-        this.chartGroup.selectAll("*").remove();
+        this.svg.remove();
     }
 
     /**
