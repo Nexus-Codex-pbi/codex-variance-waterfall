@@ -21,13 +21,13 @@ import VisualTooltipDataItem = powerbi.extensibility.VisualTooltipDataItem;
 import DataView = powerbi.DataView;
 import DataViewCategorical = powerbi.DataViewCategorical;
 
-import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
+import { dataViewWildcard, dataViewObjects } from "powerbi-visuals-utils-dataviewutils";
 import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
 import { VisualFormattingSettingsModel, textAlignFor } from "./settings";
 import { formatValue, unitScale, clamp } from "./utils";
 import { formatModelNumber } from "./shared/numberFormat";
-import { toRgba, contrastInk } from "./shared/colorHelpers";
+import { toRgba, compositeOver, contrastInk, contrastRatio, mutedInk } from "./shared/colorHelpers";
 import { Theme, directionColor, accentToken } from "./shared/bandEngine";
 import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
 import { resolveBorder } from "./shared/borderSettings";
@@ -48,17 +48,6 @@ const POSITIVE_COLOR_DEFAULT = "#007064";
 const NEGATIVE_COLOR_DEFAULT = "#e60e22";
 const TOTAL_COLOR_DEFAULT = "#130064";
 const CONNECTOR_COLOR_DEFAULT = "#b4b2a9";
-
-/** Luminance-based theme pick — same 0.55 threshold convention as the
- *  pbiKpiCard v3 pilot: decides whether the resolved background reads as
- *  a "dark" or "light" surface so the v3 token set stays legible. */
-function themeFor(hex: string): Theme {
-    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})/i.exec(hex || "");
-    if (!m) return "dark";
-    const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return luminance > 0.55 ? "light" : "dark";
-}
 
 /** Represents one bar in the waterfall */
 interface WaterfallBar {
@@ -118,6 +107,8 @@ export class Visual implements IVisual {
     // created once (constructor) and re-tinted per render; data signature
     // gates the settle-once motion (§6 — columns settle ONCE, never loop).
     private theme: Theme = "dark";
+    private surfaceHex = "#ffffff";
+    private surfaceInk = "#000000";
     private hc: HighContrastResolved = applyHighContrast(null);
     private cornerSignature: CardSignatureHandle | null = null;
     private lastDataSignature: string | null = null;
@@ -250,17 +241,23 @@ export class Visual implements IVisual {
     private resolveValueFontColor(d: WaterfallBar, customValueColor: string): string {
         if (d.categoryIndex >= 0 && this.valueFontColorHelper) {
             const instanceObjects = this.categoricalCategories?.objects?.[d.categoryIndex];
-            const resolved = this.valueFontColorHelper.getColorForMeasure(instanceObjects, "valueFontColor");
-            if (resolved && resolved.length > 0) return resolved;
+            const rule = dataViewObjects.getFillColor(instanceObjects, {
+                objectName: "labelSettings", propertyName: "valueFontColor"
+            });
+            if (rule) return this.valueFontColorHelper.getColorForMeasure(instanceObjects, "valueFontColor");
         }
         if (customValueColor && customValueColor.length > 0) return customValueColor;
         // v2 (01-17): outside value labels ride the direction law (board
         // .wvlab) — lime/magenta for drivers, theme text for anchors —
         // replacing the old flat #333 auto colour. fx rules and a user-set
         // swatch (above) still win.
-        if (d.type === "positive") return directionColor(1, this.theme);
-        if (d.type === "negative") return directionColor(-1, this.theme);
-        return surfaceTokens(this.theme).text;
+        if (d.type === "total") return this.surfaceInk;
+        const direction = directionColor(d.type === "positive" ? 1 : -1, this.theme);
+        for (let step = 0; step <= 10; step++) {
+            const ink = mix(direction, this.surfaceInk, step / 10);
+            if (contrastRatio(ink, this.surfaceHex) >= 4.5) return ink;
+        }
+        return this.surfaceInk;
     }
 
     // ─── v2 board look (01-17) helpers ─────────────────────────
@@ -463,18 +460,11 @@ export class Visual implements IVisual {
         }
 
         // ─── v2 board look (01-17): theme + the single HC rule ─────────
-        // Theme keys off the resolved background hex (pbiKpiCard pilot
-        // convention); HC resolution routed through the ONE shared fallback
-        // rule instead of a per-visual reinvention.
-        // Theme-source ladder (suite standard): visible own bg governs;
-        // user-set hex governs even at full transparency; else the report
-        // theme palette background (was: assume the bgHex, which defaulted
-        // white → light theme even on dark report pages).
         const bgTransparencyForTheme = this.formattingSettings.background.transparency.value ?? 100;
-        const bgHexIsUserSet = bgHex.toLowerCase() !== "#ffffff";
         const paletteBg = (this.colorPalette && (this.colorPalette as any).background && (this.colorPalette as any).background.value) || "#ffffff";
-        const themeSourceHex = (bgTransparencyForTheme < 100 || bgHexIsUserSet) ? bgHex : paletteBg;
-        this.theme = themeFor(themeSourceHex);
+        this.surfaceHex = compositeOver(bgHex, bgTransparencyForTheme, paletteBg);
+        this.surfaceInk = contrastInk(this.surfaceHex, "#000000", "#ffffff");
+        this.theme = this.surfaceInk === "#000000" ? "light" : "dark";
         this.hc = applyHighContrast(this.colorPalette, {
             fallbackColor: this.formattingSettings.waterfallCard.positiveColor.value.value,
         });
@@ -503,8 +493,7 @@ export class Visual implements IVisual {
             // Adaptive default (D-16 sentinel): untouched shared-Title navy
             // swaps to the dark text token on dark surfaces.
             const setTitle = titleFmt.titleColor.value.value;
-            const adaptiveTitle = setTitle === "#1a1a2e" && this.theme === "dark"
-                ? surfaceTokens("dark").text : setTitle;
+            const adaptiveTitle = setTitle === "#1a1a2e" ? this.surfaceInk : setTitle;
             this.titleEl
                 .attr("x", x)
                 .attr("y", titleFontSize + 4)
@@ -615,8 +604,8 @@ export class Visual implements IVisual {
         // defaults would vanish on a dark surface — swap to dark tokens
         // while untouched; any user pick wins.
         const setAxisLabel = ax.axisLabelColor.value.value;
-        const axisLabelColor = setAxisLabel === "#5e5d5a" && this.theme === "dark"
-            ? surfaceTokens("dark").muted : setAxisLabel;
+        const axisLabelColor = setAxisLabel === "#5e5d5a"
+            ? mutedInk(this.surfaceInk, this.surfaceHex) : setAxisLabel;
         const axisLabelFontSize = clamp(ax.axisLabelFontSize.value || 10, 6, 30);
         const setGridline = ax.gridlineColor.value.value;
         const gridlineColor = setGridline === "#e8e2d3" && this.theme === "dark"
