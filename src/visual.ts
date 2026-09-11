@@ -99,6 +99,7 @@ export class Visual implements IVisual {
     // fx (TRANS-04) state
     private categoricalCategories: powerbi.DataViewCategoryColumn | undefined;
     private positiveColorHelper: ColorHelper | null = null;
+    private negativeColorHelper: ColorHelper | null = null;
     // fx (TEXT-02) state — bar value/data label colour
     private valueFontColorHelper: ColorHelper | null = null;
 
@@ -225,6 +226,10 @@ export class Visual implements IVisual {
         if (d.type === "positive" && d.categoryIndex >= 0 && this.positiveColorHelper) {
             const instanceObjects = this.categoricalCategories?.objects?.[d.categoryIndex];
             return this.positiveColorHelper.getColorForMeasure(instanceObjects, "positiveColor");
+        }
+        if (d.type === "negative" && d.categoryIndex >= 0 && this.negativeColorHelper) {
+            const instanceObjects = this.categoricalCategories?.objects?.[d.categoryIndex];
+            return this.negativeColorHelper.getColorForMeasure(instanceObjects, "negativeColor");
         }
         return d.type === "positive" ? positiveColor : negativeColor;
     }
@@ -806,6 +811,15 @@ export class Visual implements IVisual {
             // D-16-resolved positive colour (lime when the swatch is at its
             // shipped default), so the fx ladder stays: rule > swatch > law.
             positiveColor
+        );
+        wf.negativeColor.selector = dataViewWildcard.createDataViewWildcardSelector(
+            dataViewWildcard.DataViewWildcardMatchingOption.InstancesAndTotals
+        );
+        wf.negativeColor.altConstantSelector = undefined;
+        this.negativeColorHelper = new ColorHelper(
+            this.host.colorPalette,
+            { objectName: "waterfallSettings", propertyName: "negativeColor" },
+            negativeColor
         );
 
         // ─── Conditional formatting (fx) wiring — Bar Value/Data Label
