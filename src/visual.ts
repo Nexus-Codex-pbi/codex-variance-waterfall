@@ -737,7 +737,7 @@ export class Visual implements IVisual {
             // A real 0 still contributes no bar to a waterfall, which is correct —
             // but it is now distinguishable from missing data.
             if (v !== 0) {
-                items.push({ cat: String(categories[i]), variance: v, catIndex: i });
+                items.push({ cat: categories[i] == null ? "" : String(categories[i]), variance: v, catIndex: i });
             }
         }
 
