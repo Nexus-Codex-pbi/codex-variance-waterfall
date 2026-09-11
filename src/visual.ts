@@ -61,6 +61,11 @@ function themeFor(hex: string): Theme {
 
 /** Represents one bar in the waterfall */
 interface WaterfallBar {
+    /** Scale position key — the bar's IDENTITY, never its caption (NEXUS
+     *  cycle-14 §3). Derived from the raw category index the row was built
+     *  from ("c<index>"), or a reserved token for the generated anchors, so
+     *  two bars can share a caption and still own separate bands. */
+    key: string;
     label: string;
     value: number;      // the variance amount (or total for start/end)
     cumStart: number;    // y-position bottom of bar
@@ -696,6 +701,7 @@ export class Visual implements IVisual {
 
         // Start total bar: from 0 to startValue
         bars.push({
+            key: "#start",
             label: startLabel,
             value: startValue,
             cumStart: 0,
@@ -716,6 +722,10 @@ export class Visual implements IVisual {
                     .createSelectionId()
                 : null;
             bars.push({
+                // Identity, not caption: the raw source index this row was
+                // built from survives sorting, and the aggregated overflow bar
+                // (catIndex -1) gets its own reserved token.
+                key: item.catIndex >= 0 ? `c${item.catIndex}` : "#other",
                 label: item.cat,
                 value: item.variance,
                 cumStart: prev,
@@ -729,6 +739,7 @@ export class Visual implements IVisual {
         // End total bar
         if (showEndTotal) {
             bars.push({
+                key: "#end",
                 label: endLabel,
                 value: running,
                 cumStart: 0,
@@ -857,8 +868,14 @@ export class Visual implements IVisual {
 
         this.chartGroup.attr("transform", `translate(${effectiveMargin.left},${effectiveMargin.top})`);
 
+        // Band positions key off each bar's IDENTITY, never its caption (NEXUS
+        // cycle-14 §3). A display label is not unique: an ordinary category may
+        // legitimately be called Forecast or Actual, both anchors may be named
+        // Total, and two source rows may share a caption. Every one of those
+        // collapsed onto a single band — rectangle, connector and label stacked
+        // on one coordinate — because the domain was built from labels.
         const xScale = d3Scale.scaleBand<string>()
-            .domain(bars.map(b => b.label))
+            .domain(bars.map(b => b.key))
             .range([0, plotWidth])
             .padding(1 - barWidthRatio);
 
@@ -876,7 +893,7 @@ export class Visual implements IVisual {
         if (showAxisLabels) {
             this.drawYAxis(yScale, plotHeight, plotWidth, axisLabelColor, axisLabelFontSize, gridlineColor, gridlineWidth, showGridlines, axisLineColor,
                 axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
-            this.drawXAxis(xScale, plotHeight, bars.length, axisLabelColor, axisLabelFontSize, axisLineColor,
+            this.drawXAxis(xScale, bars, plotHeight, bars.length, axisLabelColor, axisLabelFontSize, axisLineColor,
                 axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
         }
 
@@ -887,8 +904,8 @@ export class Visual implements IVisual {
                 const cur = bars[i], nxt = bars[i + 1];
                 const cy = yScale(cur.cumEnd);
                 this.chartGroup.append("line").classed("connector", true)
-                    .attr("x1", (xScale(cur.label) ?? 0) + xScale.bandwidth())
-                    .attr("y1", cy).attr("x2", xScale(nxt.label) ?? 0).attr("y2", cy)
+                    .attr("x1", (xScale(cur.key) ?? 0) + xScale.bandwidth())
+                    .attr("y1", cy).attr("x2", xScale(nxt.key) ?? 0).attr("y2", cy)
                     .attr("stroke", connectorColor).attr("stroke-width", 1.5).attr("opacity", 0.55);
             }
         }
@@ -902,14 +919,14 @@ export class Visual implements IVisual {
         const quantised = this.formattingSettings.waterfallCard.quantisedMode.value;
         if (quantised) {
             this.drawQuantisedColumn(barGroup, "v",
-                d => xScale(d.label) ?? 0,
+                d => xScale(d.key) ?? 0,
                 d => yScale(Math.max(d.cumStart, d.cumEnd)),
                 () => xScale.bandwidth(),
                 d => Math.abs(yScale(d.cumStart) - yScale(d.cumEnd)),
                 d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor));
         } else {
             barGroup.append("rect")
-                .attr("x", d => xScale(d.label) ?? 0)
+                .attr("x", d => xScale(d.key) ?? 0)
                 .attr("y", d => yScale(Math.max(d.cumStart, d.cumEnd)))
                 .attr("width", xScale.bandwidth())
                 .attr("height", d => Math.abs(yScale(d.cumStart) - yScale(d.cumEnd)))
@@ -1037,9 +1054,10 @@ export class Visual implements IVisual {
 
         this.chartGroup.attr("transform", `translate(${hMargin.left},${hMargin.top})`);
 
-        // Y axis = categories (band scale), X axis = values (linear)
+        // Y axis = categories (band scale), X axis = values (linear).
+        // Keyed by bar identity, not caption — see renderVertical (cycle-14 §3).
         const yScale = d3Scale.scaleBand<string>()
-            .domain(bars.map(b => b.label))
+            .domain(bars.map(b => b.key))
             .range([0, plotHeight])
             .padding(1 - barWidthRatio);
 
@@ -1082,17 +1100,16 @@ export class Visual implements IVisual {
 
         // Y axis category labels
         if (showAxisLabels) {
-            const labels = yScale.domain();
-            this.chartGroup.selectAll(".y-label").data(labels).enter()
+            this.chartGroup.selectAll(".y-label").data(bars).enter()
                 .append("text").classed("y-label", true)
-                .attr("x", -8).attr("y", d => (yScale(d) ?? 0) + yScale.bandwidth() / 2)
+                .attr("x", -8).attr("y", d => (yScale(d.key) ?? 0) + yScale.bandwidth() / 2)
                 .attr("text-anchor", "end").attr("dominant-baseline", "central")
                 .attr("font-size", `${axisLabelFontSize}px`).attr("fill", axisLabelColor)
                 .attr("font-family", axisLabelFontFamily)
                 .style("font-weight", axisLabelWeight)
                 .style("font-style", axisLabelStyle)
                 .style("text-decoration", axisLabelDecoration)
-                .text(d => d.length > 14 ? d.substring(0, 12) + "..." : d);
+                .text(d => d.label.length > 14 ? d.label.substring(0, 12) + "..." : d.label);
         }
 
         // Y axis line
@@ -1107,8 +1124,8 @@ export class Visual implements IVisual {
                 const cur = bars[i], nxt = bars[i + 1];
                 const cx = xScale(cur.cumEnd);
                 this.chartGroup.append("line").classed("connector", true)
-                    .attr("x1", cx).attr("y1", (yScale(cur.label) ?? 0) + yScale.bandwidth())
-                    .attr("x2", cx).attr("y2", yScale(nxt.label) ?? 0)
+                    .attr("x1", cx).attr("y1", (yScale(cur.key) ?? 0) + yScale.bandwidth())
+                    .attr("x2", cx).attr("y2", yScale(nxt.key) ?? 0)
                     .attr("stroke", connectorColor).attr("stroke-width", 1.5).attr("opacity", 0.55);
             }
         }
@@ -1122,14 +1139,14 @@ export class Visual implements IVisual {
         if (quantisedH) {
             this.drawQuantisedColumn(barGroup, "h",
                 d => xScale(Math.min(d.cumStart, d.cumEnd)),
-                d => yScale(d.label) ?? 0,
+                d => yScale(d.key) ?? 0,
                 d => Math.abs(xScale(d.cumEnd) - xScale(d.cumStart)),
                 () => yScale.bandwidth(),
                 d => this.resolveBarColor(d, positiveColor, negativeColor, totalColor));
         } else {
             barGroup.append("rect")
                 .attr("x", d => xScale(Math.min(d.cumStart, d.cumEnd)))
-                .attr("y", d => yScale(d.label) ?? 0)
+                .attr("y", d => yScale(d.key) ?? 0)
                 .attr("width", d => Math.abs(xScale(d.cumEnd) - xScale(d.cumStart)))
                 .attr("height", yScale.bandwidth())
                 .attr("fill", d => this.isHighContrast
@@ -1154,7 +1171,7 @@ export class Visual implements IVisual {
         // Value labels
         if (showValues) {
             barGroup.append("text").classed("bar-label", true)
-                .attr("y", d => (yScale(d.label) ?? 0) + yScale.bandwidth() / 2)
+                .attr("y", d => (yScale(d.key) ?? 0) + yScale.bandwidth() / 2)
                 .attr("x", d => {
                     const barLeft = xScale(Math.min(d.cumStart, d.cumEnd));
                     const barRight = xScale(Math.max(d.cumStart, d.cumEnd));
@@ -1259,7 +1276,7 @@ export class Visual implements IVisual {
     ): void {
         barGroup.append("text")
             .classed("bar-label", true)
-            .attr("x", d => (xScale(d.label) ?? 0) + xScale.bandwidth() / 2)
+            .attr("x", d => (xScale(d.key) ?? 0) + xScale.bandwidth() / 2)
             .attr("y", d => {
                 const barTop = yScale(Math.max(d.cumStart, d.cumEnd));
                 const barBottom = yScale(Math.min(d.cumStart, d.cumEnd));
@@ -1373,11 +1390,12 @@ export class Visual implements IVisual {
 
     /** Draw X axis with category labels */
     private drawXAxis(
-        xScale: d3Scale.ScaleBand<string>, plotHeight: number, barCount: number,
+        xScale: d3Scale.ScaleBand<string>, bars: WaterfallBar[], plotHeight: number, barCount: number,
         axisLabelColor: string, axisLabelFontSize: number, axisLineColor: string,
         axisLabelFontFamily: string, axisLabelWeight: string, axisLabelStyle: string, axisLabelDecoration: string
     ): void {
-        const labels = xScale.domain();
+        // The domain now holds keys, so the tick row is driven by the bars
+        // themselves: positioned by key, captioned by label (NEXUS cycle-14 §3).
         const rotate = barCount > 6;
 
         // Axis line
@@ -1389,11 +1407,11 @@ export class Visual implements IVisual {
 
         // Labels
         this.chartGroup.selectAll(".x-label")
-            .data(labels)
+            .data(bars)
             .enter()
             .append("text")
             .classed("x-label", true)
-            .attr("x", d => (xScale(d) ?? 0) + xScale.bandwidth() / 2)
+            .attr("x", d => (xScale(d.key) ?? 0) + xScale.bandwidth() / 2)
             .attr("y", plotHeight + 12)
             .attr("text-anchor", rotate ? "end" : "middle")
             .attr("dominant-baseline", "hanging")
@@ -1405,10 +1423,10 @@ export class Visual implements IVisual {
             .style("text-decoration", axisLabelDecoration)
             .attr("transform", d => {
                 if (!rotate) return "";
-                const cx = (xScale(d) ?? 0) + xScale.bandwidth() / 2;
+                const cx = (xScale(d.key) ?? 0) + xScale.bandwidth() / 2;
                 return `rotate(-45, ${cx}, ${plotHeight + 12})`;
             })
-            .text(d => d.length > 14 ? d.substring(0, 12) + "..." : d);
+            .text(d => d.label.length > 14 ? d.label.substring(0, 12) + "..." : d.label);
 
         // High contrast overrides for X axis
         if (this.isHighContrast) {
