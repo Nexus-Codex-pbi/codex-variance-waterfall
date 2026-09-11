@@ -664,6 +664,13 @@ export class Visual implements IVisual {
             return;
         }
         const startValue: number = boundOpening ?? 0;
+        if (startValueCol && categories.some((_, index) =>
+            asNumberOrNull(startValueCol.values[index]) !== startValue)) {
+            this.renderEmpty(width, height,
+                "Start Value must contain the same numeric opening balance for every category.");
+            this.eventService.renderingFinished(options);
+            return;
+        }
 
         interface CatVar { cat: string; variance: number; catIndex: number; }
         let items: CatVar[] = [];
