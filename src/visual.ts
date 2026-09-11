@@ -67,7 +67,7 @@ interface WaterfallBar {
 
 export class Visual implements IVisual {
     private target: HTMLElement;
-    private host: IVisualHost;
+    private host: IVisualHost & { allowInteractions?: boolean };
     private eventService: IVisualEventService;
     private selectionManager: ISelectionManager;
     private tooltipService: ITooltipService;
@@ -146,11 +146,13 @@ export class Visual implements IVisual {
 
         // Context menu on right-click
         this.target.addEventListener("contextmenu", (e: MouseEvent) => {
+            e.preventDefault();
+            if (this.host.allowInteractions === false) return;
+            const bar = this.findBarFromEvent(e);
             this.selectionManager.showContextMenu(
-                {},
+                bar?.selectionId || {},
                 { x: e.clientX, y: e.clientY }
             );
-            e.preventDefault();
         });
 
         this.svg = d3Selection.select(this.target)
@@ -206,10 +208,28 @@ export class Visual implements IVisual {
 
         // Cross-filtering on bar click
         this.target.addEventListener("click", (e: MouseEvent) => {
+            if (this.host.allowInteractions === false) return;
             const bar = this.findBarFromEvent(e);
             if (bar && bar.selectionId) {
                 this.selectionManager.select(bar.selectionId, e.ctrlKey || e.metaKey);
                 e.stopPropagation();
+            } else if (!bar) {
+                this.selectionManager.clear();
+            }
+        });
+        this.target.addEventListener("keydown", (e: KeyboardEvent) => {
+            if (this.host.allowInteractions === false) return;
+            const bar = this.findBarFromEvent(e);
+            if ((e.key === "Enter" || e.key === " ") && bar?.selectionId) {
+                e.preventDefault();
+                this.selectionManager.select(bar.selectionId, e.ctrlKey || e.metaKey);
+            } else if (e.key === "Escape") {
+                e.preventDefault();
+                this.selectionManager.clear();
+            } else if ((e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) && bar?.selectionId) {
+                e.preventDefault();
+                const box = (e.target as SVGElement).getBoundingClientRect();
+                this.selectionManager.showContextMenu(bar.selectionId, { x: box.x, y: box.bottom });
             }
         });
     }
@@ -369,19 +389,27 @@ export class Visual implements IVisual {
         ], { duration: 400 });
     }
 
-    /** Find which WaterfallBar the mouse is over by checking SVG rect elements */
-    private findBarFromEvent(e: MouseEvent): WaterfallBar | null {
-        const target = e.target as SVGElement;
-        if (!target || target.tagName !== "rect") return null;
-        const parentG = target.parentElement;
-        if (!parentG || !parentG.classList.contains("wf-bar")) return null;
-        // Find index among wf-bar groups
-        const allBars = this.chartGroup.selectAll<SVGGElement, WaterfallBar>(".wf-bar").nodes();
-        const idx = allBars.indexOf(parentG as unknown as SVGGElement);
-        if (idx >= 0 && idx < this.currentBars.length) {
-            return this.currentBars[idx];
-        }
-        return null;
+    /** Read the bound identity, independent of DOM order or the hit child. */
+    private findBarFromEvent(e: Event): WaterfallBar | null {
+        const group = (e.target as Element)?.closest?.(".wf-bar");
+        if (!group || !this.chartGroup.node()?.contains(group)) return null;
+        return d3Selection.select<Element, WaterfallBar>(group).datum() || null;
+    }
+
+    private prepareBarInteractions(): void {
+        this.chartGroup.selectAll<SVGGElement, WaterfallBar>(".wf-bar")
+            .attr("tabindex", d => this.host.allowInteractions !== false && d.selectionId ? 0 : null)
+            .attr("role", d => d.selectionId ? "button" : null)
+            .attr("aria-label", d => `${d.label}: ${this.formatMeasure(d.value, this.currentDisplayUnits, this.currentDecimalPlaces)}`)
+            .style("--wf-focus", this.isHighContrast ? this.colorPalette.foreground.value : this.surfaceInk)
+            .each((d, index, nodes) => {
+                const group = d3Selection.select(nodes[index]);
+                const box = nodes[index].getBBox();
+                group.insert("rect", ":first-child").classed("wf-hit", true)
+                    .attr("x", box.x).attr("y", box.y)
+                    .attr("width", Math.max(1, box.width)).attr("height", Math.max(1, box.height))
+                    .attr("fill", "transparent").style("pointer-events", "all");
+            });
     }
 
     public update(options: VisualUpdateOptions) {
@@ -877,6 +905,7 @@ export class Visual implements IVisual {
                 valueFontFamily, valueWeight, valueStyle, valueDecoration,
                 axisLabelFontFamily, axisLabelWeight, axisLabelStyle, axisLabelDecoration);
         }
+        this.prepareBarInteractions();
 
         this.eventService.renderingFinished(options);
         } catch (e) {
