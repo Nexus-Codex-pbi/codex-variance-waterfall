@@ -25,7 +25,7 @@ import { dataViewWildcard, dataViewObjects } from "powerbi-visuals-utils-datavie
 import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
 import { VisualFormattingSettingsModel, textAlignFor } from "./settings";
-import { formatValue, unitScale, clamp } from "./utils";
+import { unitScale, clamp } from "./utils";
 import { formatModelNumber } from "./shared/numberFormat";
 import { toRgba, compositeOver, contrastInk, contrastRatio, mutedInk } from "./shared/colorHelpers";
 import { Theme, directionColor, accentToken } from "./shared/bandEngine";
@@ -1486,10 +1486,9 @@ export class Visual implements IVisual {
     private formatMeasure(value: number, units: string, decimals: number): string {
         // A null/non-finite reading is a gap, never a number (class 3).
         if (value === null || value === undefined || !isFinite(value)) return "—";
-        const format = this.modelFormat;
-        // No format string on the measure: nothing to preserve, and the
-        // pre-existing numeric path stays byte-for-byte what it was.
-        if (!format) return formatValue(value, units, decimals);
+        // Even an unformatted measure must use the host's separators and the
+        // explicit precision control, rather than falling back to toFixed().
+        const format = this.modelFormat || "0";
         if (format.indexOf("%") >= 0) {
             // Power BI stores a percentage as its decimal fraction, so the ×100
             // is a unit conversion, not a display unit — a percentage is never
