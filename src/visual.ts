@@ -25,9 +25,9 @@ import { dataViewWildcard } from "powerbi-visuals-utils-dataviewutils";
 import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
 import { VisualFormattingSettingsModel, textAlignFor } from "./settings";
-import { formatValue, unitScale, clamp, contrastText } from "./utils";
+import { formatValue, unitScale, clamp } from "./utils";
 import { formatModelNumber } from "./shared/numberFormat";
-import { toRgba } from "./shared/colorHelpers";
+import { toRgba, contrastInk } from "./shared/colorHelpers";
 import { Theme, directionColor, accentToken } from "./shared/bandEngine";
 import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
 import { resolveBorder } from "./shared/borderSettings";
@@ -1239,7 +1239,7 @@ export class Visual implements IVisual {
                     const pos = this.resolvePosition(valuePosition, barW, fontSize * 3);
                     if (pos === "inside") {
                         const c = this.resolveBarColor(d, positiveColor, negativeColor, totalColor);
-                        return contrastText(c);
+                        return contrastInk(c, "#000000", "#ffffff");
                     }
                     return this.resolveValueFontColor(d, customValueColor);
                 })
@@ -1339,7 +1339,7 @@ export class Visual implements IVisual {
                 const pos = this.resolvePosition(valuePosition, barBottom - barTop, fontSize);
                 if (pos === "inside") {
                     const c = this.resolveBarColor(d, positiveColor, negativeColor, totalColor);
-                    return contrastText(c);
+                    return contrastInk(c, "#000000", "#ffffff");
                 }
                 return this.resolveValueFontColor(d, customValueColor);
             })
