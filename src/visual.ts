@@ -1569,11 +1569,16 @@ export class Visual implements IVisual {
     /** Render empty state message */
     private renderEmpty(width: number, height: number, message?: string): void {
         // Muted card signature on the landing/empty state (§4).
-        applyCardSignature(this.cornerSignature, this.formattingSettings?.cardSignature, { autoHex: "#8f8ab8", muted: true });
+        applyCardSignature(this.cornerSignature, this.formattingSettings?.cardSignature, {
+            autoHex: "#8f8ab8", muted: true,
+            hcActive: this.isHighContrast, hcColor: this.colorPalette.foreground.value,
+            glowMix: 0,
+        });
         const emptyText = message
             || this.localizationManager.getDisplayName("Empty_Title")
             || "Add Category, Start Value, and Variance fields to build the waterfall.";
-        const fillColor = this.isHighContrast ? this.colorPalette.foreground.value : "#5e5d5a";
+        const fillColor = this.isHighContrast ? this.colorPalette.foreground.value
+            : mutedInk(this.surfaceInk, this.surfaceHex);
 
         this.svg.append("text")
             .classed("empty-message", true)
