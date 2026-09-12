@@ -33,7 +33,7 @@ import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
 import { resolveBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
 import { applyCardSignature } from "./shared/cardSignatureSettings";
-import { resolveCodexTheme, neonColorFor, neonFilter, forcedInk, ResolvedCodexTheme, flareHexFor } from "./shared/codexThemeSettings";
+import { resolveCodexTheme, neonColorFor, neonFilter, forcedInk, forcedChrome, isFxResolved, ResolvedCodexTheme, flareHexFor } from "./shared/codexThemeSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph, HighContrastResolved } from "./shared/highContrast";
 import { LicenseGate } from "./shared/licensing";
@@ -281,7 +281,22 @@ export class Visual implements IVisual {
             const rule = dataViewObjects.getFillColor(instanceObjects, {
                 objectName: "labelSettings", propertyName: "valueFontColor"
             });
-            if (rule) return this.valueFontColorHelper.getColorForMeasure(instanceObjects, "valueFontColor");
+            // #819 pass 2 — rule 3's fx exemption, on the suite-wide name.
+            // A per-instance object is NOT by itself proof of a rule: this
+            // card persists a CONSTANT swatch edit through the same wildcard
+            // selector (altConstantSelector = undefined, below), so the
+            // swatch can arrive on the same field. isFxResolved() separates
+            // them — a resolved colour that differs from the pane swatch is
+            // DATA and is painted verbatim under every mode; one that equals
+            // it is the user's ink and falls through to forcedInk's guard.
+            // The empty swatch is this card's "auto" sentinel, and
+            // isFxResolved's null-guard reads paneHex === "" as "not fx", so
+            // `!customValueColor` carries that case: against an empty swatch
+            // a per-instance object can only be a rule.
+            if (rule) {
+                const resolved = this.valueFontColorHelper.getColorForMeasure(instanceObjects, "valueFontColor");
+                if (!customValueColor || isFxResolved(resolved, customValueColor)) return resolved;
+            }
         }
         // v2 (01-17): outside value labels ride the direction law (board
         // .wvlab) — lime/magenta for drivers, theme text for anchors —
@@ -738,11 +753,18 @@ export class Visual implements IVisual {
         const showConnectors = wf.connectorLine.value;
         // Connectors: 1.5px hairlines in the muted foreground (board) —
         // chrome, so a forced mode's default is that mode's own muted token
-        // (#819 rule 2); an explicitly set Connector Color is guarded, not
-        // discarded (#819 rule 3).
+        // (#819 rule 2); an explicitly set Connector Color is GUARDED by the
+        // chrome bar, not the ink bar (#819 pass 2): a hairline only has to
+        // separate from the surface (≥ 1.3:1), not be readable at 4.5:1.
+        // The untouched default stays outside the helper because
+        // forcedChrome's Auto branch returns the user's hex verbatim and so
+        // cannot express this repo's adaptive "swap to the mode token while
+        // untouched" default (D-16).
         const setConnector = wf.connectorColor.value.value;
-        const connectorColor = forcedInk(setConnector, surfaceTokens(this.theme).muted, codex,
-            setConnector === CONNECTOR_COLOR_DEFAULT);
+        const connectorDefault = surfaceTokens(this.theme).muted;
+        const connectorColor = setConnector === CONNECTOR_COLOR_DEFAULT
+            ? connectorDefault
+            : forcedChrome(setConnector, connectorDefault, codex, false);
         const showEndTotal = wf.showEndTotal.value;
         const startLabel = wf.startLabel.value || "Forecast";
         const endLabel = wf.endLabel.value || "Actual";
@@ -775,16 +797,26 @@ export class Visual implements IVisual {
         // #819 rule 2: gridlines and axis lines are CHROME — under a forced
         // mode their default comes from that mode's own surface tokens, not
         // from the cream/taupe pair authored for the board's light look.
+        // #819 pass 2: both have a picker behind them, so an explicitly set
+        // colour is guarded by forcedChrome's ≥ 1.3:1 SEPARATION bar rather
+        // than forcedInk's 4.5:1 readability bar — furniture only has to be
+        // visible. The untouched default stays outside the helper (see the
+        // Connector Color note above: forcedChrome's Auto branch cannot
+        // express D-16's adaptive default).
         const setGridline = ax.gridlineColor.value.value;
         const gridlineDefault = this.theme === "dark" ? "rgba(143,138,184,0.28)"
             : inkOverride ? surfaceTokens("light").track : "#e8e2d3";
-        const gridlineColor = forcedInk(setGridline, gridlineDefault, codex, setGridline === "#e8e2d3");
+        const gridlineColor = setGridline === "#e8e2d3"
+            ? gridlineDefault
+            : forcedChrome(setGridline, gridlineDefault, codex, false);
         const gridlineWidth = Math.max(0.1, ax.gridlineWidth.value);
         const showGridlines = ax.showGridlines.value;
         const setAxisLine = ax.axisLineColor.value.value;
         const axisLineDefault = this.theme === "dark" ? surfaceTokens("dark").muted
             : inkOverride ? surfaceTokens("light").muted : "#b4b2a9";
-        const axisLineColor = forcedInk(setAxisLine, axisLineDefault, codex, setAxisLine === "#b4b2a9");
+        const axisLineColor = setAxisLine === "#b4b2a9"
+            ? axisLineDefault
+            : forcedChrome(setAxisLine, axisLineDefault, codex, false);
         const showAxisTitles = ax.showAxisTitles.value;
         const xAxisTitle = ax.xAxisTitle.value || "";
         const yAxisTitle = ax.yAxisTitle.value || "";
