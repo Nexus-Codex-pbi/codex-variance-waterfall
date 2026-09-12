@@ -33,7 +33,7 @@ import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
 import { resolveBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
 import { applyCardSignature } from "./shared/cardSignatureSettings";
-import { resolveCodexTheme, neonColorFor, neonFilter, ResolvedCodexTheme } from "./shared/codexThemeSettings";
+import { resolveCodexTheme, neonColorFor, neonFilter, ResolvedCodexTheme, flareHexFor } from "./shared/codexThemeSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph, HighContrastResolved } from "./shared/highContrast";
 import { LicenseGate } from "./shared/licensing";
@@ -627,6 +627,7 @@ export class Visual implements IVisual {
         // shared resolver's precedence, mirrored from the KPI pilot).
         applyCardSignature(this.cornerSignature, this.formattingSettings.cardSignature, {
             autoHex: neonColorFor(accentToken(this.theme), codex),
+            flareHex: flareHexFor(codex),
             hcActive: this.hc.active,
             hcColor: this.hc.color,
             glowMix: this.hc.active ? 0 : codex.neon ? codex.glow : (this.theme === "light" ? 0 : 50),
@@ -1705,6 +1706,7 @@ export class Visual implements IVisual {
         // Muted card signature on the landing/empty state (§4).
         applyCardSignature(this.cornerSignature, this.formattingSettings?.cardSignature, {
             autoHex: "#8f8ab8", muted: true,
+            flareHex: flareHexFor(this.codex),
             hcActive: this.isHighContrast, hcColor: this.colorPalette.foreground.value,
             glowMix: 0,
         });
