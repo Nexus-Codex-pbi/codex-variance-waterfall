@@ -1254,13 +1254,34 @@ export class Visual implements IVisual {
             this.textWidth(b.label, axisLabelFontSize, axisLabelFontFamily, axisLabelWeight))));
         const tickWidth = Math.max(0, ...xScale.ticks(6).map(value =>
             this.textWidth(this.formatMeasure(value, displayUnits, decimalPlaces), axisLabelFontSize, axisLabelFontFamily, axisLabelWeight)));
-        const valueWidth = showValues ? Math.max(0, ...bars.map(b =>
-            this.textWidth(this.barLabel(b, displayUnits, decimalPlaces), fontSize, valueFontFamily, valueWeight))) : 0;
-        const outsideSpace = valuePosition === "inside" ? 0 : valueWidth + 8;
+        // Outside value labels: reserve only the width a label actually pushes
+        // past the plot, measured against the scale, not the widest label on
+        // both sides unconditionally (Neil 2026-09-12: "the axis values
+        // shouldn't have so much padding all around them" — a third of the
+        // tile was an empty gutter between the categories and the bars).
+        const labelW = (b: WaterfallBar) => this.textWidth(this.barLabel(b, displayUnits, decimalPlaces), fontSize, valueFontFamily, valueWeight);
+        const baseLeft = 8 + extraLeft + (showAxisLabels ? categoryWidth + 8 : 0);
+        const baseRight = Math.max(12, tickWidth / 2 + 8);
+        let outsideSpace = 0, rightSpace = 0;
+        if (showValues && valuePosition !== "inside") {
+            for (let pass = 0; pass < 2; pass++) {
+                const pw = width - baseLeft - outsideSpace - baseRight - rightSpace;
+                if (pw < 32) break;
+                const trial = xScale.copy().range([0, pw]);
+                let over = 0, overR = 0;
+                for (const b of bars) {
+                    const lo = trial(Math.min(b.cumStart, b.cumEnd)), hi = trial(Math.max(b.cumStart, b.cumEnd));
+                    if (this.resolvePosition(valuePosition, hi - lo, (labelW(b) + 8) / 1.5) === "inside") continue;
+                    if (b.type === "negative") over = Math.max(over, labelW(b) + 4 - lo);
+                    else overR = Math.max(overR, hi + 4 + labelW(b) - pw);
+                }
+                outsideSpace = Math.ceil(over); rightSpace = Math.ceil(overR);
+            }
+        }
         const hMargin = {
-            top: 20 + titleH, right: Math.max(12, tickWidth / 2 + 8, outsideSpace),
+            top: 20 + titleH, right: baseRight + rightSpace,
             bottom: Math.max(24, axisLabelFontSize + 16) + extraBottom,
-            left: 8 + extraLeft + (showAxisLabels ? categoryWidth + 8 : 0) + outsideSpace
+            left: baseLeft + outsideSpace
         };
         const plotWidth = width - hMargin.left - hMargin.right;
         const plotHeight = height - hMargin.top - hMargin.bottom;
