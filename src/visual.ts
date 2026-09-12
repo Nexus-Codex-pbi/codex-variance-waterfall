@@ -1634,8 +1634,11 @@ export class Visual implements IVisual {
         if (format.indexOf("%") >= 0) {
             // Power BI stores a percentage as its decimal fraction, so the ×100
             // is a unit conversion, not a display unit — a percentage is never
-            // abbreviated on top of it.
-            return formatModelNumber(value, decimals > 0 ? `0.${"0".repeat(decimals)}%` : "0%", this.hostLocale);
+            // abbreviated on top of it. The model format's own sections are kept
+            // (`0.00%;(0.00%)` must print "(10.00%)"), with Decimal Places written
+            // into each — rebuilding a bare `0.00%` here discarded the negative
+            // section (NEXUS re-review 2026-09-13 W1).
+            return formatModelNumber(value, Visual.withDecimals(format, decimals), this.hostLocale);
         }
         const { divisor, suffix } = unitScale(value, units);
         const sectioned = Visual.withDecimals(format, decimals);
