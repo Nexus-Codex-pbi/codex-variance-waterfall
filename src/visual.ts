@@ -33,6 +33,7 @@ import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
 import { resolveBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
 import { applyCardSignature } from "./shared/cardSignatureSettings";
+import { resolveCodexTheme, neonColorFor, neonFilter, ResolvedCodexTheme } from "./shared/codexThemeSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph, HighContrastResolved } from "./shared/highContrast";
 import { LicenseGate } from "./shared/licensing";
@@ -110,6 +111,10 @@ export class Visual implements IVisual {
     private theme: Theme = "dark";
     private surfaceHex = "#ffffff";
     private surfaceInk = "#000000";
+    /** Nexus Codex Theme (#819) — resolved ONCE per update() and threaded
+     *  through both renderers, so nothing resolves the mode twice. Auto
+     *  reproduces the derivation above exactly; Dark/Light/Neon force it. */
+    private codex: ResolvedCodexTheme | null = null;
     private hc: HighContrastResolved = applyHighContrast(null);
     private cornerSignature: CardSignatureHandle | null = null;
     private lastDataSignature: string | null = null;
@@ -278,7 +283,10 @@ export class Visual implements IVisual {
             });
             if (rule) return this.valueFontColorHelper.getColorForMeasure(instanceObjects, "valueFontColor");
         }
-        if (customValueColor && customValueColor.length > 0) return customValueColor;
+        // #819: a forced Codex mode owns this ink — a static swatch picked
+        // for the report's own background is not a choice about the Codex
+        // surface. The fx rule above is a DATA colour and still wins.
+        if (!this.inkForced && customValueColor && customValueColor.length > 0) return customValueColor;
         // v2 (01-17): outside value labels ride the direction law (board
         // .wvlab) — lime/magenta for drivers, theme text for anchors —
         // replacing the old flat #333 auto colour. fx rules and a user-set
@@ -420,12 +428,36 @@ export class Visual implements IVisual {
         this.renderEmpty(width, height, "Resize");
     }
 
+    /** True while a forced Codex mode (Dark/Light/Neon) is painting — the
+     *  mode then owns every ink judged against its own surface (#819). */
+    private get inkForced(): boolean {
+        return !!this.codex && this.codex.mode !== "auto";
+    }
+
     /** Glow filter for driver/anchor columns — dark theme only, never
-     *  under HC (§8 drops all glow). Empty string = no filter. */
+     *  under HC (§8 drops all glow). Empty string = no filter.
+     *
+     *  Under Neon this per-MARK halo yields to the group-level flare in
+     *  barGroupGlow(): one filter on the `.wf-bar` group glows the column
+     *  AND the value label drawn inside it, and stacking both would
+     *  double the halo on the same pixels. */
     private glowFor(base: string): string {
+        if (this.codex && this.codex.neon) return "";
         return this.hc.active || this.theme === "light"
             ? ""
             : `drop-shadow(0 0 9px color-mix(in srgb, ${base} 50%, transparent))`;
+    }
+
+    /** Neon flare on a `.wf-bar` group — the visual's PRIMARY data mark.
+     *  Scope "flare" paints every column's halo in the card's flare
+     *  colour; scope "all" glows each column in its own hue. Axis text,
+     *  axis titles, gridlines and connectors are drawn OUTSIDE `.wf-bar`
+     *  and so never glow. Empty string = no filter. */
+    private barGroupGlow(base: string): string {
+        const codex = this.codex;
+        if (!codex || !codex.neon || this.hc.active) return "";
+        const flare = neonFilter(neonColorFor(base, codex), codex.glow);
+        return flare === "none" ? "" : flare;
     }
 
     /** Settle-once motion (§6) on a column — scale-in from its own base,
@@ -516,11 +548,44 @@ export class Visual implements IVisual {
         this.backgroundRect.attr("width", width).attr("height", height);
         const background = this.formattingSettings.background;
         const bgHex = background.backgroundColor.value?.value ?? "#ffffff";
+        const bgTransparencyPct = background.transparency.value ?? 100;
+        const paletteBg = (this.colorPalette && (this.colorPalette as any).background && (this.colorPalette as any).background.value) || "#ffffff";
+
+        // ─── The ONE theme derivation (v2 board look 01-17) ────────────
+        // Composite the Background fill over whatever the page puts behind
+        // it and read the tone. This is the AUTO answer — the shipped 1.x
+        // behaviour, and the control the Codex card must reproduce byte
+        // for byte.
+        const autoSurfaceHex = compositeOver(bgHex, bgTransparencyPct, paletteBg);
+        const autoTheme: Theme = contrastInk(autoSurfaceHex, "#000000", "#ffffff") === "#000000" ? "light" : "dark";
+        this.hc = applyHighContrast(this.colorPalette, {
+            fallbackColor: this.formattingSettings.waterfallCard.positiveColor.value.value,
+        });
+
+        // ─── Nexus Codex Theme (#819): a mode switch ABOVE that pick ───
+        // Auto returns exactly the values derived above. Dark/Light/Neon
+        // paint the Codex card surface at the card's OWN Surface
+        // Transparency instead of the user's Background colour, and force
+        // the token set. High contrast already collapsed to Auto inside
+        // the resolver — no HC branch of our own.
+        const codex = resolveCodexTheme(this.formattingSettings.codexTheme, {
+            hcActive: this.hc.active,
+            autoTheme,
+            autoBgHex: bgHex,
+            autoTransparencyPct: bgTransparencyPct,
+            behindHex: paletteBg,
+        });
+        this.codex = codex;
+        // A forced mode OWNS the inks it paints against its own surface:
+        // an axis grey chosen for a white card is not a choice about the
+        // Codex dark surface. Bar fills (direction law, user swatches, fx
+        // rules) stay the user's.
+        const inkOverride = codex.mode !== "auto";
+
         if (this.isHighContrast) {
             this.backgroundRect.attr("fill", "none");
         } else {
-            const bgTransparencyPct = background.transparency.value ?? 100;
-            this.backgroundRect.attr("fill", toRgba(bgHex, bgTransparencyPct));
+            this.backgroundRect.attr("fill", toRgba(codex.bgHex, codex.transparencyPct));
         }
 
         // Visual's own Border card — SVG stroke-rect inset by half the
@@ -545,23 +610,26 @@ export class Visual implements IVisual {
             this.borderRect.style("display", "none");
         }
 
-        // ─── v2 board look (01-17): theme + the single HC rule ─────────
-        const bgTransparencyForTheme = this.formattingSettings.background.transparency.value ?? 100;
-        const paletteBg = (this.colorPalette && (this.colorPalette as any).background && (this.colorPalette as any).background.value) || "#ffffff";
-        this.surfaceHex = compositeOver(bgHex, bgTransparencyForTheme, paletteBg);
+        // ─── v2 board look (01-17): the surface every ink is judged
+        // against. In Auto these three are identical to the pre-#819
+        // values (codex.surfaceHex === autoSurfaceHex, codex.theme ===
+        // autoTheme); a forced mode swaps in the Codex surface so every
+        // adaptive ink downstream re-reads against what the viewer sees.
+        this.surfaceHex = codex.surfaceHex;
         this.surfaceInk = contrastInk(this.surfaceHex, "#000000", "#ffffff");
-        this.theme = this.surfaceInk === "#000000" ? "light" : "dark";
-        this.hc = applyHighContrast(this.colorPalette, {
-            fallbackColor: this.formattingSettings.waterfallCard.positiveColor.value.value,
-        });
+        this.theme = codex.theme;
 
         // Corner-bracket signature — accent (cyan) tinted per the board;
-        // glow only on the dark theme, never under HC.
+        // glow only on the dark theme, never under HC. Under Neon the
+        // glow budget becomes the card's. The flare colour reaches the
+        // bracket only through the AUTO slot: a report that turned Auto
+        // Colour off and picked its own accent keeps that accent (the
+        // shared resolver's precedence, mirrored from the KPI pilot).
         applyCardSignature(this.cornerSignature, this.formattingSettings.cardSignature, {
-            autoHex: accentToken(this.theme),
+            autoHex: neonColorFor(accentToken(this.theme), codex),
             hcActive: this.hc.active,
             hcColor: this.hc.color,
-            glowMix: this.hc.active || this.theme === "light" ? 0 : 50,
+            glowMix: this.hc.active ? 0 : codex.neon ? codex.glow : (this.theme === "light" ? 0 : 50),
             muted: false,
         });
 
@@ -579,7 +647,7 @@ export class Visual implements IVisual {
             // Adaptive default (D-16 sentinel): untouched shared-Title navy
             // swaps to the dark text token on dark surfaces.
             const setTitle = titleFmt.titleColor.value.value;
-            const adaptiveTitle = setTitle === "#1a1a2e" ? this.surfaceInk : setTitle;
+            const adaptiveTitle = inkOverride || setTitle === "#1a1a2e" ? this.surfaceInk : setTitle;
             this.titleEl
                 .attr("x", x)
                 .attr("y", titleFontSize + 4)
@@ -666,7 +734,7 @@ export class Visual implements IVisual {
         const showConnectors = wf.connectorLine.value;
         // Connectors: 1.5px hairlines in the muted foreground (board) —
         // a user-set Connector Color still resolves.
-        const connectorColor = wf.connectorColor.value.value !== CONNECTOR_COLOR_DEFAULT
+        const connectorColor = !inkOverride && wf.connectorColor.value.value !== CONNECTOR_COLOR_DEFAULT
             ? wf.connectorColor.value.value
             : surfaceTokens(this.theme).muted;
         const showEndTotal = wf.showEndTotal.value;
@@ -690,18 +758,21 @@ export class Visual implements IVisual {
         // Adaptive defaults (D-16): the three static light-grey axis
         // defaults would vanish on a dark surface — swap to dark tokens
         // while untouched; any user pick wins.
+        // #819: "adapt while untouched" becomes "adapt when FORCED or
+        // untouched" — a forced Codex mode owns the axis furniture it
+        // paints against its own surface.
         const setAxisLabel = ax.axisLabelColor.value.value;
-        const axisLabelColor = setAxisLabel === "#5e5d5a"
+        const axisLabelColor = inkOverride || setAxisLabel === "#5e5d5a"
             ? mutedInk(this.surfaceInk, this.surfaceHex) : setAxisLabel;
         const axisLabelFontSize = clamp(ax.axisLabelFontSize.value || 10, 6, 30);
         const setGridline = ax.gridlineColor.value.value;
-        const gridlineColor = setGridline === "#e8e2d3" && this.theme === "dark"
-            ? "rgba(143,138,184,0.28)" : setGridline;
+        const gridlineColor = (inkOverride || setGridline === "#e8e2d3") && this.theme === "dark"
+            ? "rgba(143,138,184,0.28)" : inkOverride ? "#e8e2d3" : setGridline;
         const gridlineWidth = Math.max(0.1, ax.gridlineWidth.value);
         const showGridlines = ax.showGridlines.value;
         const setAxisLine = ax.axisLineColor.value.value;
-        const axisLineColor = setAxisLine === "#b4b2a9" && this.theme === "dark"
-            ? surfaceTokens("dark").muted : setAxisLine;
+        const axisLineColor = (inkOverride || setAxisLine === "#b4b2a9") && this.theme === "dark"
+            ? surfaceTokens("dark").muted : inkOverride ? "#b4b2a9" : setAxisLine;
         const showAxisTitles = ax.showAxisTitles.value;
         const xAxisTitle = ax.xAxisTitle.value || "";
         const yAxisTitle = ax.yAxisTitle.value || "";
@@ -1053,6 +1124,10 @@ export class Visual implements IVisual {
         }
 
         const barGroup = this.chartGroup.selectAll(".wf-bar").data(bars).enter().append("g").classed("wf-bar", true);
+        // #819 Neon: the flare rides the GROUP, so the column and the value
+        // label sitting on it glow together (a live style — it covers the
+        // rects and text appended below).
+        barGroup.style("filter", d => this.barGroupGlow(this.resolveBarColor(d, positiveColor, negativeColor, totalColor)) || null);
 
         // v2 (01-17): columns render the beveled 3-stop gradient (mirrors
         // accentBarGradient) over the direction-law colour, glow on dark,
@@ -1281,6 +1356,8 @@ export class Visual implements IVisual {
         // Bars (horizontal) — v2 (01-17): beveled direction-law gradient +
         // glow on dark + settle once (see renderVertical note).
         const barGroup = this.chartGroup.selectAll(".wf-bar").data(bars).enter().append("g").classed("wf-bar", true);
+        // #819 Neon: same group-level flare as the vertical renderer.
+        barGroup.style("filter", d => this.barGroupGlow(this.resolveBarColor(d, positiveColor, negativeColor, totalColor)) || null);
 
         const gradCache = new Map<string, string>();
         const quantisedH = this.formattingSettings.waterfallCard.quantisedMode.value;
@@ -1676,6 +1753,7 @@ export class Visual implements IVisual {
      * Returns properties pane formatting model content hierarchies, properties and latest formatting values.
      */
     public getFormattingModel(): powerbi.visuals.FormattingModel {
+        this.formattingSettings.codexTheme.reveal();
         return this.formattingSettingsService.buildFormattingModel(this.formattingSettings);
     }
 }

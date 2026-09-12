@@ -9,6 +9,7 @@ import FormattingSettingsSlice = formattingSettings.Slice;
 import FormattingSettingsModel = formattingSettings.Model;
 
 import { BackgroundSettings } from "./shared/backgroundSettings";
+import { CodexThemeSettings } from "./shared/codexThemeSettings";
 import { BorderSettings } from "./shared/borderSettings";
 import { TitleSettings } from "./shared/titleSettings";
 import { alignSlice, alignSelfFor, textAlignFor } from "./shared/textFormatting";
@@ -377,6 +378,7 @@ export class VisualFormattingSettingsModel extends FormattingSettingsModel {
     labelCard = new LabelSettingsCard();
     axisCard = new AxisSettingsCard();
     background = new BackgroundSettings();
+    codexTheme = new CodexThemeSettings();
     visualBorder = new BorderSettings();
 
     constructor() {
@@ -400,6 +402,6 @@ export class VisualFormattingSettingsModel extends FormattingSettingsModel {
     }
 
     cards = [this.titleSettings, this.waterfallCard, this.sortCard, this.labelCard, this.axisCard, this.background,
-        this.cardSignature, this.visualBorder
+        this.codexTheme, this.cardSignature, this.visualBorder
     ];
 }
