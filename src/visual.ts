@@ -26,7 +26,7 @@ import { ColorHelper } from "powerbi-visuals-utils-colorutils";
 
 import { VisualFormattingSettingsModel, textAlignFor } from "./settings";
 import { unitScale, clamp } from "./utils";
-import { formatModelNumber } from "./shared/numberFormat";
+import { formatModelNumber, numericSections } from "./shared/numberFormat";
 import { toRgba, compositeOver, contrastInk, contrastRatio, mutedInk } from "./shared/colorHelpers";
 import { Theme, directionColor, accentToken } from "./shared/bandEngine";
 import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
@@ -1638,21 +1638,33 @@ export class Visual implements IVisual {
             return formatModelNumber(value, decimals > 0 ? `0.${"0".repeat(decimals)}%` : "0%", this.hostLocale);
         }
         const { divisor, suffix } = unitScale(value, units);
+        const sectioned = Visual.withDecimals(format, decimals);
+        // A multi-section format (`#,0.00;(#,0.00)`) owns its own negative
+        // rendering — the shared formatter routes a negative to its section,
+        // so accounting parentheses come out of it and no sign is added here
+        // (astra 14 §6: this path printed "-100.00" for "(100.00)").
+        if (value < 0 && numericSections(sectioned).length > 1) {
+            return formatModelNumber(value / divisor, sectioned, this.hostLocale) + suffix;
+        }
         // The sign leads the whole figure, including the currency symbol: the
         // shared formatter prefixes the symbol to whatever the locale printed,
         // which reads "$-10.00". Print the magnitude and carry the sign here.
         // The digit test keeps a value that rounds away to nothing from
         // acquiring a "-0" (same guard the sibling visuals use).
-        const body = formatModelNumber(Math.abs(value) / divisor, Visual.withDecimals(format, decimals), this.hostLocale) + suffix;
+        const body = formatModelNumber(Math.abs(value) / divisor, sectioned, this.hostLocale) + suffix;
         return `${value < 0 && /[1-9]/.test(body) ? "-" : ""}${body}`;
     }
 
     /** The report's explicit Decimal Places written into the model format's own
      *  fraction section, so the format's currency and grouping tokens survive
-     *  the precision override instead of being parsed out and rebuilt here. */
+     *  the precision override instead of being parsed out and rebuilt here.
+     *  Applied to EVERY `;` section, else `#,0.00;(#,0.00)` at 0 decimals
+     *  became `#,0;(#,0.00)` — the negative section kept its own precision. */
     private static withDecimals(format: string, decimals: number): string {
         const fraction = decimals > 0 ? "." + "0".repeat(decimals) : "";
-        return /\.[0#]+/.test(format) ? format.replace(/\.[0#]+/, fraction) : format + fraction;
+        return numericSections(format)
+            .map((s) => /\.[0#]+/.test(s) ? s.replace(/\.[0#]+/, fraction) : s.replace(/([0#])(?![\s\S]*[0#])/, `$1${fraction}`))
+            .join(";");
     }
 
     /** Resolve "auto" position: inside if bar is tall enough, otherwise outside */
