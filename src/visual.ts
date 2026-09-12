@@ -33,7 +33,7 @@ import { surfaceTokens, TABULAR_NUMS, mix } from "./shared/designTokens";
 import { resolveBorder } from "./shared/borderSettings";
 import { makeCornerBrackets, CardSignatureHandle } from "./shared/cardSignature";
 import { applyCardSignature } from "./shared/cardSignatureSettings";
-import { resolveCodexTheme, neonColorFor, neonFilter, ResolvedCodexTheme, flareHexFor } from "./shared/codexThemeSettings";
+import { resolveCodexTheme, neonColorFor, neonFilter, forcedInk, ResolvedCodexTheme, flareHexFor } from "./shared/codexThemeSettings";
 import { settle } from "./shared/motion";
 import { applyHighContrast, statusGlyph, HighContrastResolved } from "./shared/highContrast";
 import { LicenseGate } from "./shared/licensing";
@@ -283,21 +283,26 @@ export class Visual implements IVisual {
             });
             if (rule) return this.valueFontColorHelper.getColorForMeasure(instanceObjects, "valueFontColor");
         }
-        // #819: a forced Codex mode owns this ink — a static swatch picked
-        // for the report's own background is not a choice about the Codex
-        // surface. The fx rule above is a DATA colour and still wins.
-        if (!this.inkForced && customValueColor && customValueColor.length > 0) return customValueColor;
         // v2 (01-17): outside value labels ride the direction law (board
         // .wvlab) — lime/magenta for drivers, theme text for anchors —
         // replacing the old flat #333 auto colour. fx rules and a user-set
-        // swatch (above) still win.
-        if (d.type === "total") return this.surfaceInk;
-        const direction = directionColor(d.type === "positive" ? 1 : -1, this.theme);
-        for (let step = 0; step <= 10; step++) {
-            const ink = mix(direction, this.surfaceInk, step / 10);
-            if (contrastRatio(ink, this.surfaceHex) >= 4.5) return ink;
+        // swatch still win.
+        let auto = this.surfaceInk;
+        if (d.type !== "total") {
+            const direction = directionColor(d.type === "positive" ? 1 : -1, this.theme);
+            for (let step = 0; step <= 10; step++) {
+                const ink = mix(direction, this.surfaceInk, step / 10);
+                if (contrastRatio(ink, this.surfaceHex) >= 4.5) { auto = ink; break; }
+            }
         }
-        return this.surfaceInk;
+        // #819 rule 3: an explicitly picked swatch is GUARDED, not replaced —
+        // a forced Codex mode keeps it while it still reads on the Codex
+        // surface and falls back to the direction ink when it does not. An
+        // empty swatch is this card's "default" sentinel ("leave default for
+        // auto"). The fx rule above is a DATA colour and still wins outright.
+        return this.codex
+            ? forcedInk(customValueColor, auto, this.codex, !customValueColor)
+            : (customValueColor || auto);
     }
 
     // ─── v2 board look (01-17) helpers ─────────────────────────
@@ -428,12 +433,6 @@ export class Visual implements IVisual {
         this.renderEmpty(width, height, "Resize");
     }
 
-    /** True while a forced Codex mode (Dark/Light/Neon) is painting — the
-     *  mode then owns every ink judged against its own surface (#819). */
-    private get inkForced(): boolean {
-        return !!this.codex && this.codex.mode !== "auto";
-    }
-
     /** Glow filter for driver/anchor columns — dark theme only, never
      *  under HC (§8 drops all glow). Empty string = no filter.
      *
@@ -449,14 +448,16 @@ export class Visual implements IVisual {
     }
 
     /** Neon flare on a `.wf-bar` group — the visual's PRIMARY data mark.
-     *  Scope "flare" paints every column's halo in the card's flare
-     *  colour; scope "all" glows each column in its own hue. Axis text,
-     *  axis titles, gridlines and connectors are drawn OUTSIDE `.wf-bar`
-     *  and so never glow. Empty string = no filter. */
+     *  #819 rule 1: a column's colour is SEMANTIC (increase / decrease /
+     *  anchor), so it is never flare-tinted — under BOTH scopes the halo
+     *  is the column's own hue. The flare colour reaches accents only
+     *  (the card signature). Axis text, axis titles, gridlines and
+     *  connectors are drawn OUTSIDE `.wf-bar` and so never glow.
+     *  Empty string = no filter. */
     private barGroupGlow(base: string): string {
         const codex = this.codex;
         if (!codex || !codex.neon || this.hc.active) return "";
-        const flare = neonFilter(neonColorFor(base, codex), codex.glow);
+        const flare = neonFilter(base, codex.glow);
         return flare === "none" ? "" : flare;
     }
 
@@ -646,9 +647,11 @@ export class Visual implements IVisual {
             const x = tAlign === "center" ? width / 2 : tAlign === "right" ? width - 8 : 8;
             const anchor = tAlign === "center" ? "middle" : tAlign === "right" ? "end" : "start";
             // Adaptive default (D-16 sentinel): untouched shared-Title navy
-            // swaps to the dark text token on dark surfaces.
+            // swaps to the dark text token on dark surfaces. #819 rule 3: a
+            // forced mode keeps an explicitly picked title ink while it reads
+            // on the Codex surface, instead of discarding it outright.
             const setTitle = titleFmt.titleColor.value.value;
-            const adaptiveTitle = inkOverride || setTitle === "#1a1a2e" ? this.surfaceInk : setTitle;
+            const adaptiveTitle = forcedInk(setTitle, this.surfaceInk, codex, setTitle === "#1a1a2e");
             this.titleEl
                 .attr("x", x)
                 .attr("y", titleFontSize + 4)
@@ -734,10 +737,12 @@ export class Visual implements IVisual {
             : accentToken(this.theme);
         const showConnectors = wf.connectorLine.value;
         // Connectors: 1.5px hairlines in the muted foreground (board) —
-        // a user-set Connector Color still resolves.
-        const connectorColor = !inkOverride && wf.connectorColor.value.value !== CONNECTOR_COLOR_DEFAULT
-            ? wf.connectorColor.value.value
-            : surfaceTokens(this.theme).muted;
+        // chrome, so a forced mode's default is that mode's own muted token
+        // (#819 rule 2); an explicitly set Connector Color is guarded, not
+        // discarded (#819 rule 3).
+        const setConnector = wf.connectorColor.value.value;
+        const connectorColor = forcedInk(setConnector, surfaceTokens(this.theme).muted, codex,
+            setConnector === CONNECTOR_COLOR_DEFAULT);
         const showEndTotal = wf.showEndTotal.value;
         const startLabel = wf.startLabel.value || "Forecast";
         const endLabel = wf.endLabel.value || "Actual";
@@ -759,21 +764,27 @@ export class Visual implements IVisual {
         // Adaptive defaults (D-16): the three static light-grey axis
         // defaults would vanish on a dark surface — swap to dark tokens
         // while untouched; any user pick wins.
-        // #819: "adapt while untouched" becomes "adapt when FORCED or
-        // untouched" — a forced Codex mode owns the axis furniture it
-        // paints against its own surface.
+        // #819 rule 3: "adapt while untouched" becomes "the mode default
+        // while untouched, the report's own ink while it still READS on the
+        // Codex surface" — a forced mode guards the axis furniture it paints
+        // against its own surface rather than discarding it.
         const setAxisLabel = ax.axisLabelColor.value.value;
-        const axisLabelColor = inkOverride || setAxisLabel === "#5e5d5a"
-            ? mutedInk(this.surfaceInk, this.surfaceHex) : setAxisLabel;
+        const axisLabelColor = forcedInk(setAxisLabel, mutedInk(this.surfaceInk, this.surfaceHex), codex,
+            setAxisLabel === "#5e5d5a");
         const axisLabelFontSize = clamp(ax.axisLabelFontSize.value || 10, 6, 30);
+        // #819 rule 2: gridlines and axis lines are CHROME — under a forced
+        // mode their default comes from that mode's own surface tokens, not
+        // from the cream/taupe pair authored for the board's light look.
         const setGridline = ax.gridlineColor.value.value;
-        const gridlineColor = (inkOverride || setGridline === "#e8e2d3") && this.theme === "dark"
-            ? "rgba(143,138,184,0.28)" : inkOverride ? "#e8e2d3" : setGridline;
+        const gridlineDefault = this.theme === "dark" ? "rgba(143,138,184,0.28)"
+            : inkOverride ? surfaceTokens("light").track : "#e8e2d3";
+        const gridlineColor = forcedInk(setGridline, gridlineDefault, codex, setGridline === "#e8e2d3");
         const gridlineWidth = Math.max(0.1, ax.gridlineWidth.value);
         const showGridlines = ax.showGridlines.value;
         const setAxisLine = ax.axisLineColor.value.value;
-        const axisLineColor = (inkOverride || setAxisLine === "#b4b2a9") && this.theme === "dark"
-            ? surfaceTokens("dark").muted : inkOverride ? "#b4b2a9" : setAxisLine;
+        const axisLineDefault = this.theme === "dark" ? surfaceTokens("dark").muted
+            : inkOverride ? surfaceTokens("light").muted : "#b4b2a9";
+        const axisLineColor = forcedInk(setAxisLine, axisLineDefault, codex, setAxisLine === "#b4b2a9");
         const showAxisTitles = ax.showAxisTitles.value;
         const xAxisTitle = ax.xAxisTitle.value || "";
         const yAxisTitle = ax.yAxisTitle.value || "";
